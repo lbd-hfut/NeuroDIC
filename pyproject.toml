@@ -1,0 +1,29 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "NeuroDIC"
+version = "0.1.0"
+description = "C++-first LibTorch and pybind11 architecture skeleton for NeuroDIC"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+wheel.packages = ["python/neurodic"]
+sdist.include = [
+    "CMakeLists.txt",
+    "cmake/**",
+    "include/**",
+    "src/**",
+    "bindings/**",
+    "python/**",
+    "docs/**",
+    "config/**",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+pythonpath = ["python"]

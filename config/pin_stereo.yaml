@@ -1,0 +1,14 @@
+solver: pin
+mode: stereo
+roi: single
+interpolation:
+  type: bspline
+  degree: 5
+model:
+  type: mlp
+  width: null
+  depth: null
+calibration: calibration_stereo.yaml
+notes:
+  - C++ PINSolver remains the only PIN solver.
+  - Stereo behavior belongs to calibration, geometry, and problem data.

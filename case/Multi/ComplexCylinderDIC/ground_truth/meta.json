@@ -1,0 +1,33 @@
+{
+  "cylinder_radius": 80.0,
+  "cylinder_height": 120.0,
+  "surface_type": "sinusoidal_cylinder",
+  "sinusoidal_amplitude": 2.0,
+  "sinusoidal_frequency": 3.0,
+  "num_cameras": 12,
+  "working_distance": 400.0,
+  "deformation_type": "sinusoidal_radial",
+  "deformation_magnitude": 0.5,
+  "speckle_physical_size": 0.0,
+  "num_surface_points": 15000000,
+  "ground_truth_num_points_requested": 100000,
+  "ground_truth_num_points_saved": 100000,
+  "num_deformed_steps": 1,
+  "ground_truth_files": {
+    "camera_intrinsics": "camera_intrinsics.npy",
+    "camera_rotations": "camera_rotations.npy",
+    "camera_translations": "camera_translations.npy",
+    "camera_centers": "camera_centers.npy",
+    "camera_distortion": "camera_distortion.npy",
+    "camera_parameters_bundle": "theoretical_camera_parameters.npz",
+    "sample_indices": "ground_truth_sample_indices.npy",
+    "surface_points": "theoretical_surface_points.npy",
+    "surface_radial_offset": "theoretical_surface_radial_offset.npy",
+    "surface_points_bundle": "theoretical_surface_points.npz",
+    "deformed_surface_pattern": "theoretical_deformed_surface_points_step{step:03d}.npy",
+    "deformation_field_pattern": "theoretical_deformation_field_step{step:03d}.npy",
+    "deformation_bundle_pattern": "theoretical_deformation_step{step:03d}.npz",
+    "radial_offset_unwrapped_preview": "radial_offset_unwrapped.png",
+    "surface_pointcloud_preview": "surface_pointcloud_delta_r_preview.png"
+  }
+}

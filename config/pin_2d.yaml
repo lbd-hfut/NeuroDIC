@@ -1,0 +1,13 @@
+solver: pin
+mode: planar_2d
+roi: single
+interpolation:
+  type: bspline
+  degree: 5
+model:
+  type: mlp
+  width: null
+  depth: null
+notes:
+  - C++ PINSolver handles this mode.
+  - TODO: replace nulls with validated defaults.

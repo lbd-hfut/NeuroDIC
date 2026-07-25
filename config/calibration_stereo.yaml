@@ -1,0 +1,8 @@
+calibration:
+  type: stereo
+  left_input: null
+  right_input: null
+  output: null
+notes:
+  - CalibrationResult is consumed by ProblemBuilder.
+  - Solver classes must not calibrate cameras.

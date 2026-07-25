@@ -1,0 +1,10 @@
+solver: ndef
+mode: multiview
+roi: single
+interpolation:
+  type: bspline
+  degree: 5
+calibration: calibration_colmap.yaml
+notes:
+  - Public config intentionally does not expose arbitrary NDeF topology.
+  - Internal NDeF architecture is controlled by C++ NDeFSolver.

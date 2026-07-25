@@ -1,0 +1,7 @@
+calibration:
+  type: colmap
+  sparse_model_path: null
+  output: null
+notes:
+  - COLMAP parsing is preprocessing.
+  - TODO: map COLMAP products into CalibrationResult.
