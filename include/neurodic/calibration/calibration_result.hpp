@@ -1,13 +1,4 @@
-/**
- * Standardized calibration result.
- *
- * Responsibilities: be the only calibration output consumed by problems/solvers.
- * Inputs: one or more CameraModel values.
- * Outputs: validated camera collection.
- * Ownership: vector owns camera values.
- * Differentiable: PARTIAL. Parameters are fixed observations unless explicitly optimized.
- * TODO(NeuroDIC): add stereo baseline and COLMAP sparse-scene metadata.
- */
+/** Standardized immutable calibration output consumed by problem builders, never solvers. */
 #pragma once
 
 #include <vector>
@@ -18,9 +9,13 @@
 namespace neurodic {
 
 struct CalibrationResult {
-    CalibrationType type = CalibrationType::NONE;
+    CalibrationType type{CalibrationType::NONE};
     std::vector<CameraModel> cameras;
-    void validate() const {}
+    torch::Tensor stereo_rotation;    // optional [3,3], left -> right
+    torch::Tensor stereo_translation; // optional [3], left -> right
+    double rms_error{0.0};
+
+    void validate() const;
 };
 
 }  // namespace neurodic

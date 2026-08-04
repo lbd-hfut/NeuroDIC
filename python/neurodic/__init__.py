@@ -6,7 +6,11 @@ Outputs: calls into neurodic._neurodic when available.
 Dependencies: compiled pybind11 extension. TODO: keep scientific kernels in C++.
 """
 
+from pkgutil import extend_path
+
 from .api import calibrate, ndef_dic, pin_dic
+
+__path__ = extend_path(__path__, __name__)
 
 try:
     from . import _neurodic

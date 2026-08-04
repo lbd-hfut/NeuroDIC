@@ -18,6 +18,25 @@
 
 namespace neurodic {
 
+struct BSplineCoefficientBlock {
+    int height{0};
+    int width{0};
+    int degree{5};
+    int pad_offset{0};
+    torch::Tensor coeff_cpu;
+    mutable torch::Tensor coeff_gpu;
+
+    void validate() const;
+    const torch::Tensor& cpu() const;
+    const torch::Tensor& on(const torch::Device& device) const;
+};
+
 torch::Tensor compute_bspline_coefficients(const torch::Tensor& image, int degree);
+
+BSplineCoefficientBlock make_bspline_coefficient_block(
+    const torch::Tensor& mirror_padded_image,
+    int degree,
+    int pad_offset
+);
 
 }  // namespace neurodic

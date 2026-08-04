@@ -12,15 +12,25 @@ if(NEURODIC_TORCH_FOUND)
         src/core/context.cpp
         src/data/roi.cpp
         src/data/image.cpp
+        src/data/image_precompute_context.cpp
         src/data/multiview_dataset.cpp
+        src/calibration/camera_model.cpp
+        src/calibration/calibration_result.cpp
+        src/calibration/mono_calibration.cpp
+        src/calibration/stereo_calibration.cpp
         src/interpolation/bspline.cpp
         src/interpolation/bspline_coefficients.cpp
         src/interpolation/torch_bspline.cpp
+        src/initialization/seed_set.cpp
+        src/initialization/sift_grid_seed_initializer.cpp
         src/problem/pin_problem.cpp
         src/problem/ndef_problem.cpp
         src/solver/pin_solver.cpp
         src/solver/ndef_solver.cpp
     )
+    # The static core is linked into the pybind11 shared module (_neurodic),
+    # so all objects must be position-independent.
+    set_target_properties(neurodic_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 else()
     add_library(neurodic_core INTERFACE)
 endif()
@@ -35,6 +45,11 @@ if(NEURODIC_TORCH_FOUND)
     neurodic_apply_warnings(neurodic_core)
     target_link_libraries(neurodic_core PUBLIC ${TORCH_LIBRARIES})
     target_compile_definitions(neurodic_core PUBLIC NEURODIC_HAS_TORCH=1)
+    if(OpenCV_FOUND)
+        target_link_libraries(neurodic_core PUBLIC ${OpenCV_LIBS})
+        target_include_directories(neurodic_core PUBLIC ${OpenCV_INCLUDE_DIRS})
+        target_compile_definitions(neurodic_core PUBLIC NEURODIC_HAS_OPENCV=1)
+    endif()
 else()
     target_include_directories(neurodic_core
         INTERFACE
@@ -57,6 +72,12 @@ if(NEURODIC_BUILD_PYTHON AND NEURODIC_PYBIND11_FOUND)
         bindings/python/bind_result.cpp
     )
     target_link_libraries(_neurodic PRIVATE neurodic_core)
+    if(NEURODIC_TORCH_PYTHON_LIBRARY)
+        target_link_libraries(_neurodic PRIVATE ${NEURODIC_TORCH_PYTHON_LIBRARY})
+    endif()
+    set_target_properties(_neurodic PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/python/neurodic
+    )
     install(TARGETS _neurodic LIBRARY DESTINATION neurodic)
 endif()
 
