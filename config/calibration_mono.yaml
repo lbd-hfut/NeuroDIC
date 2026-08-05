@@ -1,7 +1,0 @@
-calibration:
-  type: mono
-  input: null
-  output: null
-notes:
-  - Calibration runs before problem construction.
-  - TODO: define board/image request schema.

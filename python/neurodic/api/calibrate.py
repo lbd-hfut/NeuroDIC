@@ -1,12 +1,15 @@
-"""Calibration high-level Python entry point.
+"""High-level dispatch for the Traditional-DIC calibration port."""
 
-Responsibilities: future wrapper for C++ calibration adapters.
-Inputs: calibration type and input paths/options.
-Outputs: CalibrationResult from compiled backend.
-Dependencies: neurodic._neurodic. TODO: add typed request objects.
-"""
+from .. import calibration as _calibration
 
 
-def calibrate(*args, **kwargs):
-    """Run calibration through the compiled backend once implemented."""
-    raise NotImplementedError("TODO(NeuroDIC): call C++ CalibrationManager through neurodic._neurodic")
+def calibrate(mode: str, *args, **kwargs):
+    """Dispatch mono, stereo, or COLMAP-like multiview calibration."""
+    normalized = mode.lower()
+    if normalized == "mono":
+        return _calibration.calibrate_mono_zhang(*args, **kwargs)
+    if normalized == "stereo":
+        return _calibration.calibrate_stereo_zhang(*args, **kwargs)
+    if normalized in {"colmap", "multiview", "self_calibration"}:
+        return _calibration.calibrate_multiview_colmap_like(*args, **kwargs)
+    raise ValueError(f"Unsupported calibration mode: {mode}")
