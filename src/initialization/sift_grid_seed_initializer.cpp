@@ -79,26 +79,16 @@ SeedSet SiftGridSeedInitializer::initialize(const torch::Tensor& reference,
         if (it == best.end() || c.quality > it->second.quality) best[key] = c;
     }
     if (static_cast<int>(best.size()) < options_.min_seeds_per_roi) return SeedSet::empty();
-    std::vector<float> us, vs;
-    for (const auto& item : best) { us.push_back(item.second.uv.x); vs.push_back(item.second.uv.y); }
-    auto median = [](std::vector<float> v) { std::sort(v.begin(), v.end()); const auto n=v.size(); return n%2?v[n/2]:(v[n/2-1]+v[n/2])/2; };
-    const float mu = median(us), mv = median(vs);
-    std::vector<float> du, dv;
-    for (std::size_t i=0;i<us.size();++i) { du.push_back(std::abs(us[i]-mu)); dv.push_back(std::abs(vs[i]-mv)); }
-    const float madu = median(du), madv = median(dv);
     std::vector<float> positions, displacements;
     for (const auto& item : best) {
         const auto& c = item.second;
-        if (std::abs(c.uv.x-mu) < options_.mad_threshold*madu+1e-6 &&
-            std::abs(c.uv.y-mv) < options_.mad_threshold*madv+1e-6) {
-            positions.insert(positions.end(), {c.pos.x,c.pos.y});
-            displacements.insert(displacements.end(), {c.uv.x,c.uv.y});
-        }
+        positions.insert(positions.end(), {c.pos.x,c.pos.y});
+        displacements.insert(displacements.end(), {c.uv.x,c.uv.y});
     }
     if (positions.empty()) return SeedSet::empty();
     auto p = torch::from_blob(positions.data(), {static_cast<int64_t>(positions.size()/2),2}, torch::kFloat32).clone();
     auto uv = torch::from_blob(displacements.data(), {static_cast<int64_t>(displacements.size()/2),2}, torch::kFloat32).clone();
-    return SeedSet::from_tensors(p, uv);
+    return clean_seed_set(p, uv, {options_.mad_threshold, options_.min_seeds_per_roi});
 #endif
 }
 

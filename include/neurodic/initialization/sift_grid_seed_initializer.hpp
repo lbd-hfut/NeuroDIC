@@ -3,6 +3,7 @@
 
 #include <torch/torch.h>
 
+#include "neurodic/initialization/seed_cleanup.hpp"
 #include "neurodic/initialization/seed_set.hpp"
 
 namespace neurodic {
