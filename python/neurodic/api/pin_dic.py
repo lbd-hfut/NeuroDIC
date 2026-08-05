@@ -10,6 +10,7 @@ import torch
 
 from ..config import load_config
 from ..models import _require_backend
+from ..runtime import configure_runtime
 from ..seeds import initialize_seeds
 
 
@@ -42,7 +43,7 @@ def _precompute_options(backend, config: Mapping[str, Any]):
 
 
 def _apply_training(problem, config: Mapping[str, Any]) -> None:
-    for key in ("seed_iterations", "photometric_iterations", "photometric_sample_count",
+    for key in ("seed_iterations", "seed_pretrain_uv_scale_threshold", "photometric_iterations", "photometric_sample_count",
                 "photometric_sampling_enabled", "znssd_kernel_size", "seed_learning_rate",
                 "photometric_learning_rate"):
         if key in config.get("training", {}):
@@ -86,6 +87,22 @@ def _write_case_artifacts(case_root: Path, result, output_subdir: str | None) ->
     plt.close(figure)
 
 
+def _build_problem(reference_array, deformed_array, mask_array, values, seeds=None):
+    """Assemble one planar problem; stereo orchestration reuses this thin helper."""
+    backend = _require_backend()
+    if seeds is None:
+        seeds = initialize_seeds(reference_array, deformed_array, mask_array, values)
+    if isinstance(seeds, Mapping):
+        seeds = backend.make_seed_set(torch.as_tensor(seeds["seed_pos"], dtype=torch.float32),
+                                      torch.as_tensor(seeds["seed_uv"], dtype=torch.float32))
+    problem = backend.PINProblem(torch.from_numpy(np.asarray(reference_array, dtype=np.float32)),
+                                 torch.from_numpy(np.asarray(deformed_array, dtype=np.float32)),
+                                 torch.from_numpy(np.asarray(mask_array, dtype=bool)), seeds,
+                                 _model_options(backend, values), _precompute_options(backend, values))
+    _apply_training(problem, values)
+    return problem
+
+
 def pin_dic(reference, deformed=None, roi_mask=None, config: str | Path | Mapping[str, Any] = "config/pin_2d.yaml",
             *, seeds=None, write_case_artifacts: bool = True, output_subdir: str | None = None):
     """Run the C++ planar PIN-DIC pipeline.
@@ -95,6 +112,7 @@ def pin_dic(reference, deformed=None, roi_mask=None, config: str | Path | Mappin
     """
     backend = _require_backend()
     values = _mapping(config)
+    configure_runtime(values)
     case_root = Path(reference) if isinstance(reference, (str, Path)) and deformed is None else None
     if case_root is not None:
         import cv2
@@ -109,15 +127,7 @@ def pin_dic(reference, deformed=None, roi_mask=None, config: str | Path | Mappin
     mask_array = np.asarray(roi_mask, dtype=bool)
     if reference_array.shape != deformed_array.shape or reference_array.shape != mask_array.shape:
         raise ValueError("reference, deformed, and ROI mask must have matching 2D shapes")
-    if seeds is None:
-        seeds = initialize_seeds(reference_array, deformed_array, mask_array, values)
-    if isinstance(seeds, Mapping):
-        seeds = backend.make_seed_set(torch.as_tensor(seeds["seed_pos"], dtype=torch.float32),
-                                      torch.as_tensor(seeds["seed_uv"], dtype=torch.float32))
-    problem = backend.PINProblem(torch.from_numpy(reference_array), torch.from_numpy(deformed_array),
-                                 torch.from_numpy(mask_array), seeds, _model_options(backend, values),
-                                 _precompute_options(backend, values))
-    _apply_training(problem, values)
+    problem = _build_problem(reference_array, deformed_array, mask_array, values, seeds)
     result = backend.PINSolver().solve(problem)
     if case_root is not None and write_case_artifacts:
         _write_case_artifacts(case_root, result, output_subdir)

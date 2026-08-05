@@ -37,6 +37,22 @@ struct PINResult {
     SolverDiagnostics diagnostics;
 };
 
+struct PINStereoResult {
+    PINResult reference_disparity;  // L0 -> R0
+    PINResult left_temporal;        // L0 -> L1
+    PINResult deformed_disparity;   // L0 -> R1
+    torch::Tensor left_reference_coordinates;   // CPU float64 [N,2]
+    torch::Tensor right_reference_coordinates;  // CPU float64 [N,2]
+    torch::Tensor left_current_coordinates;     // CPU float64 [N,2]
+    torch::Tensor right_current_coordinates;    // CPU float64 [N,2]
+    torch::Tensor reference_points;              // CPU float64 [N,3]
+    torch::Tensor current_points;                // CPU float64 [N,3]
+    torch::Tensor displacement_3d;               // CPU float64 [N,3]
+    torch::Tensor valid;                         // CPU bool [N]
+    torch::Tensor reference_reprojection_error;  // CPU float64 [N]
+    torch::Tensor current_reprojection_error;    // CPU float64 [N]
+};
+
 struct NDeFResult {
     FieldResult surface;
     FieldResult deformation;

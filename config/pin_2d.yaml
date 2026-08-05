@@ -1,5 +1,8 @@
 solver: pin
 mode: planar_2d
+runtime:
+  random_seed: 20260805
+  deterministic: true
 roi: single
 interpolation:
   type: bspline
@@ -23,6 +26,8 @@ training:
   photometric_sampling_enabled: true
   znssd_kernel_size: 7
   seed_iterations: 5000
+  # Per component: use seed MSE only when the cleaned seed half-range is strictly above this pixel value.
+  seed_pretrain_uv_scale_threshold: 8.0
   photometric_iterations: 300
   photometric_sample_count: 16384
   seed_learning_rate: 1.0e-3

@@ -37,11 +37,15 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
     double final_loss = 0.0;
     int iterations = 0;
     PINResult result;
-    if (problem.seed_iterations > 0) {
+    const auto seed_scales = problem.seeds.scale_uv.slice(0, 2, 4);
+    const auto active_seed_components = torch::nonzero(
+        seed_scales > problem.seed_pretrain_uv_scale_threshold).reshape({-1}).to(device, torch::kLong);
+    if (problem.seed_iterations > 0 && active_seed_components.numel() > 0) {
         MSELoss seed_loss;
         AdamOptimizer optimizer(model->parameters(), problem.seed_learning_rate);
         const auto run = optimizer.minimize(problem.seed_iterations, [&] {
-            return seed_loss.compute(decode(seed_pos) - seed_uv);
+            return seed_loss.compute(decode(seed_pos).index_select(1, active_seed_components) -
+                                     seed_uv.index_select(1, active_seed_components));
         });
         final_loss = run.final_loss;
         iterations += run.iterations;
@@ -115,6 +119,10 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
     result.diagnostics.iterations = iterations;
     result.diagnostics.final_loss = final_loss;
     result.diagnostics.metrics["seed_count"] = static_cast<double>(seed_pos.size(0));
+    result.diagnostics.metrics["seed_pretraining_enabled"] = active_seed_components.numel() > 0 ? 1.0 : 0.0;
+    result.diagnostics.metrics["seed_pretraining_components"] = static_cast<double>(active_seed_components.numel());
+    result.diagnostics.metrics["seed_uv_scale_u"] = seed_scales[0].item<double>();
+    result.diagnostics.metrics["seed_uv_scale_v"] = seed_scales[1].item<double>();
     result.diagnostics.metrics["photometric_sampling_enabled"] = problem.photometric_sampling_enabled ? 1.0 : 0.0;
     return result;
 }

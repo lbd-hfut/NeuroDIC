@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from .config import load_config
+from .runtime import configure_runtime
 
 try:
     from . import _neurodic
@@ -42,6 +43,7 @@ def _common_options(initialization: Mapping[str, Any], options: Any) -> None:
 def initialize_seeds(reference: np.ndarray, deformed: np.ndarray, roi_mask: np.ndarray,
                      config: Mapping[str, Any]) -> dict[str, np.ndarray | str]:
     """Run one configured seed strategy and return original-image seed tensors."""
+    configure_runtime(config)
     backend = _require_backend()
     import torch
 

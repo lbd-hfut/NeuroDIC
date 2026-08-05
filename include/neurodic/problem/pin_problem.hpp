@@ -6,7 +6,7 @@
  * Outputs: problem consumed by PINSolver.
  * Ownership: value shell.
  * Differentiable: PARTIAL. Prepared observations are fixed; training path is differentiable.
- * Stereo assembly remains a later extension of this common value object.
+ * Stereo assembly composes three instances of this planar value object.
  */
 #pragma once
 
@@ -40,6 +40,8 @@ public:
     SeedSet seeds;
     PINModelOptions model_options;
     int seed_iterations{500};
+    // Seed MSE is enabled per component only when its cleaned half-range exceeds this value in pixels.
+    double seed_pretrain_uv_scale_threshold{8.0};
     int photometric_iterations{1500};
     int photometric_sample_count{16384};
     bool photometric_sampling_enabled{true};

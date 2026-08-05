@@ -1,11 +1,14 @@
 #include <pybind11/pybind11.h>
 
 #include "neurodic/core/types.hpp"
+#include "neurodic/core/random.hpp"
 #include "neurodic/loss/photometric.hpp"
 
 namespace py = pybind11;
 
 void bind_core(py::module_& module) {
+    module.def("set_random_seed", &neurodic::set_random_seed, py::arg("seed"),
+               "Seed LibTorch and OpenCV random state for one deterministic NeuroDIC run.");
     py::enum_<neurodic::SolverType>(module, "SolverType")
         .value("PIN", neurodic::SolverType::PIN)
         .value("NDEF", neurodic::SolverType::NDEF);

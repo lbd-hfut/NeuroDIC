@@ -1,14 +1,61 @@
 solver: pin
 mode: stereo
-roi: single
+runtime:
+  random_seed: 20260805
+  deterministic: true
+case:
+  root: case/Stereo/plate_center_load
+  left_images: cam1
+  right_images: cam2
+  roi: ROI.bmp
+  camera_pair: result/calibration/camera_pair.json
+  # Sorted images: first is reference; frame selects the current pair.
+  frame: -1
+roi: left_reference
 interpolation:
   type: bspline
   degree: 5
 model:
   type: mlp
-  width: null
-  depth: null
+  hidden_dim: 32
+  hidden_layers: 3
+  fourier_encoding:
+    enabled: false
+    num_frequencies: 6
+    include_input: true
+    angular_scale: 3.141592653589793
+training:
+  device: cuda
+  photometric_loss: znssd
+  photometric_sampling_enabled: false
+  znssd_kernel_size: 7
+  seed_iterations: 100
+  # Per component: use seed MSE only when the cleaned seed half-range is strictly above this pixel value.
+  seed_pretrain_uv_scale_threshold: 8.0
+  photometric_iterations: 1000
+  photometric_sample_count: 16384
+  seed_learning_rate: 1.0e-3
+  photometric_learning_rate: 5.0e-4
+initialization:
+  strategy: integer_search
+  target_seed_count: 256
+  outlier_rejection: {method: mad, threshold: 4.5, min_seed_count: 3}
+  integer_search:
+    kmeans_iterations: 20
+    kmeans_sample_limit: 20000
+    search: {subset_radius: 10, search_radius: 80, pyramid_enabled: true, pyramid_scale: 4, pyramid_refinement_radius: 6}
+    sift_prior: {enabled: true, max_features: 4000, ratio_threshold: 0.75, robust_mad_factor: 5.0, interpolation_neighbors: 8, interpolation_radius: 180.0}
+    subpixel: {enabled: true, subset_radius: 15, max_iterations: 30, convergence_threshold: 1.0e-3}
+reconstruction:
+  max_reprojection_error_px: 5.0
+  require_positive_depth: true
+  require_image_bounds: true
+  undistort_iterations: 12
+  world_scale: 1.0
+output:
+  result: result
+  visualization: visualization
 calibration: calibration.yaml
 notes:
   - C++ PINSolver remains the only PIN solver.
-  - Stereo behavior belongs to calibration, geometry, and problem data.
+  - C++ PINStereoSolver computes L0->R0, L0->L1, and L0->R1, then reconstructs X0 and X1.

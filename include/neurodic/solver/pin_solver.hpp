@@ -7,8 +7,8 @@
  * Ownership: owns model/optimizer during solve.
  * Differentiable: PARTIAL. Model -> representation -> geometry -> B-spline -> loss
  * must preserve the PyTorch autograd graph.
- * The current implementation performs seed MSE pretraining followed by ZNSSD
- * photometric Adam optimization. Stereo and L-BFGS refinement remain pending.
+ * The current implementation performs seed MSE pretraining followed by SSD or
+ * ZNSSD photometric Adam optimization. PINStereoSolver composes this solver.
  */
 #pragma once
 

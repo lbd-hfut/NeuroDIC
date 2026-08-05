@@ -11,6 +11,8 @@ void test_initialization();
 void test_geometry();
 void test_solver_interfaces();
 void test_pin_solver();
+void test_pin_stereo_solver();
+void test_random();
 
 int main() {
     static_assert(static_cast<int>(neurodic::InterpolationDegree::LINEAR) == 1);
@@ -27,6 +29,8 @@ int main() {
     test_geometry();
     test_solver_interfaces();
     test_pin_solver();
+    test_pin_stereo_solver();
+    test_random();
 
     std::cout << "NeuroDIC C++ architecture tests passed\n";
     return 0;

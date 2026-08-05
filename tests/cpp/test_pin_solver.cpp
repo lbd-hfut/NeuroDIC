@@ -35,7 +35,22 @@ void test_pin_solver() {
     problem.photometric_sample_count = 32;
     auto result = neurodic::PINSolver().solve(problem);
     assert(result.diagnostics.status == neurodic::SolverStatus::CONVERGED);
-    assert(result.diagnostics.iterations == 4);
+    // Constant seed displacement has near-zero half-range, so seed MSE is intentionally skipped.
+    assert(result.diagnostics.iterations == 2);
+    assert(result.diagnostics.metrics.at("seed_pretraining_enabled") == 0.0);
     assert(result.displacement.coordinates.sizes() == torch::IntArrayRef({256, 2}));
     assert(result.displacement.values.sizes() == torch::IntArrayRef({256, 2}));
+
+    auto selective_uv = torch::tensor({{-10.F, 0.F}, {10.F, 0.F}, {-8.F, 0.F}, {8.F, 0.F}});
+    neurodic::PINProblem selective_problem(reference, reference.clone(), mask,
+        neurodic::SeedSet::from_tensors(seed_positions, selective_uv));
+    selective_problem.model_options.hidden_dim = 8;
+    selective_problem.model_options.hidden_layers = 1;
+    selective_problem.seed_iterations = 2;
+    selective_problem.photometric_iterations = 0;
+    selective_problem.seed_pretrain_uv_scale_threshold = 8.0;
+    auto selective_result = neurodic::PINSolver().solve(selective_problem);
+    assert(selective_result.diagnostics.iterations == 2);
+    assert(selective_result.diagnostics.metrics.at("seed_pretraining_enabled") == 1.0);
+    assert(selective_result.diagnostics.metrics.at("seed_pretraining_components") == 1.0);
 }

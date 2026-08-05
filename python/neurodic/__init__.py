@@ -15,10 +15,11 @@ try:
 except ImportError:
     _neurodic = None
 
-from .api import calibrate, ndef_dic, pin_dic
+from .api import calibrate, ndef_dic, pin_dic, pin_stereo_dic
 from . import calibration
 from . import seeds
 from . import models
+from .runtime import configure_runtime
 
 
 def native_available() -> bool:
@@ -26,4 +27,4 @@ def native_available() -> bool:
     return _neurodic is not None
 
 
-__all__ = ["calibrate", "calibration", "models", "seeds", "ndef_dic", "pin_dic", "native_available"]
+__all__ = ["calibrate", "calibration", "models", "seeds", "ndef_dic", "pin_dic", "pin_stereo_dic", "configure_runtime", "native_available"]

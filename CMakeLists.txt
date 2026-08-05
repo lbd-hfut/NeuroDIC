@@ -20,6 +20,7 @@ if(NEURODIC_TORCH_FOUND)
     add_library(neurodic_core
         src/core/result.cpp
         src/core/context.cpp
+        src/core/random.cpp
         src/data/roi.cpp
         src/data/image.cpp
         src/data/image_precompute_context.cpp
@@ -51,8 +52,10 @@ if(NEURODIC_TORCH_FOUND)
         src/optimizer/adam.cpp
         src/representation/pin_displacement_field.cpp
         src/problem/pin_problem.cpp
+        src/problem/pin_stereo_problem.cpp
         src/problem/ndef_problem.cpp
         src/solver/pin_solver.cpp
+        src/solver/pin_stereo_solver.cpp
         src/solver/ndef_solver.cpp
     )
     # The static core is linked into the pybind11 shared module (_neurodic),
@@ -116,6 +119,7 @@ if(NEURODIC_BUILD_TESTS AND NEURODIC_TORCH_FOUND)
     enable_testing()
     add_executable(neurodic_cpp_tests
         tests/cpp/test_core.cpp
+        tests/cpp/test_random.cpp
         tests/cpp/test_roi.cpp
         tests/cpp/test_bspline.cpp
         tests/cpp/test_autograd_bspline.cpp
@@ -123,6 +127,7 @@ if(NEURODIC_BUILD_TESTS AND NEURODIC_TORCH_FOUND)
         tests/cpp/test_geometry.cpp
         tests/cpp/test_solver_interfaces.cpp
         tests/cpp/test_pin_solver.cpp
+        tests/cpp/test_pin_stereo_solver.cpp
     )
     target_link_libraries(neurodic_cpp_tests PRIVATE neurodic_core)
     neurodic_apply_warnings(neurodic_cpp_tests)
