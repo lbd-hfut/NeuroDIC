@@ -1,4 +1,10 @@
-"""Visualization helpers for solved results.
+"""Visualization helpers for exported calibration and DIC results."""
 
-TODO(NeuroDIC): add plotting utilities that consume exported result tensors only.
-"""
+from .calibration import (
+    visualization_dir_for_result,
+    visualize_multiview_calibration,
+    visualize_stereo_calibration,
+)
+from .seeds import visualize_seed_matches
+
+__all__ = ["visualization_dir_for_result", "visualize_multiview_calibration", "visualize_stereo_calibration", "visualize_seed_matches"]

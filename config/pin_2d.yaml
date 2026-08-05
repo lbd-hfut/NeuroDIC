@@ -6,8 +6,56 @@ interpolation:
   degree: 5
 model:
   type: mlp
-  width: null
-  depth: null
+  hidden_dim: 64
+  hidden_layers: 5
+  activation: tanh
+  fourier_encoding:
+    # Fixed NDeF-style dyadic Fourier basis, not MSPINN's random B matrix.
+    enabled: false
+    num_frequencies: 6
+    include_input: true
+    angular_scale: 3.141592653589793
 notes:
   - C++ PINSolver handles this mode.
-  - TODO: replace nulls with validated defaults.
+training:
+  device: cuda
+  photometric_loss: znssd  # ssd | znssd
+  photometric_sampling_enabled: true
+  znssd_kernel_size: 7
+  seed_iterations: 5000
+  photometric_iterations: 300
+  photometric_sample_count: 16384
+  seed_learning_rate: 1.0e-3
+  photometric_learning_rate: 5.0e-4
+initialization:
+  strategy: integer_search  # integer_search | sift_search
+  target_seed_count: 256
+  outlier_rejection:
+    method: mad
+    threshold: 4.5
+    min_seed_count: 3
+  integer_search:
+    kmeans_iterations: 20
+    kmeans_sample_limit: 20000
+    search:
+      subset_radius: 10
+      search_radius: 30
+      pyramid_enabled: true
+      pyramid_scale: 4
+      pyramid_refinement_radius: 4
+    sift_prior:
+      enabled: true
+      max_features: 4000
+      ratio_threshold: 0.75
+      robust_mad_factor: 5.0
+      interpolation_neighbors: 8
+      interpolation_radius: 180.0
+    subpixel:
+      enabled: true
+      subset_radius: 15
+      max_iterations: 30
+      convergence_threshold: 1.0e-3
+  sift_search:
+    lowe_ratio: 0.75
+    flann_trees: 5
+    flann_checks: 50

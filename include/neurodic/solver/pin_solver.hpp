@@ -1,13 +1,14 @@
 /**
  * Unified PIN solver.
  *
- * Responsibilities: solve both PIN-DIC 2D and PIN-DIC Stereo through one class.
+ * Responsibilities: solve planar 2D PIN-DIC through one C++/LibTorch path.
  * Inputs: PINProblem with prepared data/calibration/coefficients/initialization.
  * Outputs: PINResult.
  * Ownership: owns model/optimizer during solve.
  * Differentiable: PARTIAL. Model -> representation -> geometry -> B-spline -> loss
  * must preserve the PyTorch autograd graph.
- * TODO(NeuroDIC): implement the first validated PIN-DIC 2D pipeline.
+ * The current implementation performs seed MSE pretraining followed by ZNSSD
+ * photometric Adam optimization. Stereo and L-BFGS refinement remain pending.
  */
 #pragma once
 
