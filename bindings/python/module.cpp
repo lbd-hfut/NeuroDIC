@@ -16,6 +16,7 @@ void bind_data(py::module_& module);
 void bind_interpolation(py::module_& module);
 void bind_initialization(py::module_& module);
 void bind_calibration(py::module_& module);
+void bind_traditional_calibration(py::module_& module);
 void bind_problem(py::module_& module);
 void bind_geometry(py::module_& module);
 void bind_solver(py::module_& module);
@@ -28,6 +29,7 @@ PYBIND11_MODULE(_neurodic, module) {
     bind_interpolation(module);
     bind_initialization(module);
     bind_calibration(module);
+    bind_traditional_calibration(module);
     bind_problem(module);
     bind_geometry(module);
     bind_solver(module);

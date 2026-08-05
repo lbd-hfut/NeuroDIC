@@ -10,6 +10,7 @@ void test_autograd_bspline();
 void test_initialization();
 void test_geometry();
 void test_solver_interfaces();
+void test_pin_solver();
 
 int main() {
     static_assert(static_cast<int>(neurodic::InterpolationDegree::LINEAR) == 1);
@@ -25,6 +26,7 @@ int main() {
     test_initialization();
     test_geometry();
     test_solver_interfaces();
+    test_pin_solver();
 
     std::cout << "NeuroDIC C++ architecture tests passed\n";
     return 0;

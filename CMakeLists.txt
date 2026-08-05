@@ -6,6 +6,16 @@ include(cmake/NeuroDICOptions.cmake)
 include(cmake/NeuroDICCompilerWarnings.cmake)
 include(cmake/NeuroDICDependencies.cmake)
 
+set(NEURODIC_TRADITIONAL_CALIBRATION_SOURCES)
+if(NEURODIC_BUILD_TRADITIONAL_CALIBRATION)
+    list(APPEND NEURODIC_TRADITIONAL_CALIBRATION_SOURCES
+        src/calibration/traditional/camera_model.cpp
+        src/calibration/traditional/mono_calibration.cpp
+        src/calibration/traditional/stereo_calibration.cpp
+        src/calibration/traditional/multiview_calibration.cpp
+    )
+endif()
+
 if(NEURODIC_TORCH_FOUND)
     add_library(neurodic_core
         src/core/result.cpp
@@ -18,11 +28,28 @@ if(NEURODIC_TORCH_FOUND)
         src/calibration/calibration_result.cpp
         src/calibration/mono_calibration.cpp
         src/calibration/stereo_calibration.cpp
+        ${NEURODIC_TRADITIONAL_CALIBRATION_SOURCES}
+        src/geometry/projection.cpp
+        src/geometry/triangulation.cpp
+        src/geometry/stereo_geometry.cpp
+        src/geometry/ndef_geometry.cpp
         src/interpolation/bspline.cpp
         src/interpolation/bspline_coefficients.cpp
         src/interpolation/torch_bspline.cpp
+        src/loss/mse.cpp
+        src/loss/ssd.cpp
+        src/loss/znssd.cpp
+        src/loss/photometric.cpp
         src/initialization/seed_set.cpp
+        src/initialization/seed_cleanup.cpp
         src/initialization/sift_grid_seed_initializer.cpp
+        src/initialization/traditional_seed_initializer.cpp
+        src/model/fourier.cpp
+        src/model/mlp.cpp
+        src/model/ndef_internal_model.cpp
+        src/model/model_factory.cpp
+        src/optimizer/adam.cpp
+        src/representation/pin_displacement_field.cpp
         src/problem/pin_problem.cpp
         src/problem/ndef_problem.cpp
         src/solver/pin_solver.cpp
@@ -45,6 +72,9 @@ if(NEURODIC_TORCH_FOUND)
     neurodic_apply_warnings(neurodic_core)
     target_link_libraries(neurodic_core PUBLIC ${TORCH_LIBRARIES})
     target_compile_definitions(neurodic_core PUBLIC NEURODIC_HAS_TORCH=1)
+    if(NEURODIC_BUILD_TRADITIONAL_CALIBRATION)
+        target_link_libraries(neurodic_core PUBLIC Eigen3::Eigen)
+    endif()
     if(OpenCV_FOUND)
         target_link_libraries(neurodic_core PUBLIC ${OpenCV_LIBS})
         target_include_directories(neurodic_core PUBLIC ${OpenCV_INCLUDE_DIRS})
@@ -66,6 +96,7 @@ if(NEURODIC_BUILD_PYTHON AND NEURODIC_PYBIND11_FOUND)
         bindings/python/bind_interpolation.cpp
         bindings/python/bind_initialization.cpp
         bindings/python/bind_calibration.cpp
+        bindings/python/bind_traditional_calibration.cpp
         bindings/python/bind_problem.cpp
         bindings/python/bind_geometry.cpp
         bindings/python/bind_solver.cpp
@@ -91,6 +122,7 @@ if(NEURODIC_BUILD_TESTS AND NEURODIC_TORCH_FOUND)
         tests/cpp/test_initialization.cpp
         tests/cpp/test_geometry.cpp
         tests/cpp/test_solver_interfaces.cpp
+        tests/cpp/test_pin_solver.cpp
     )
     target_link_libraries(neurodic_cpp_tests PRIVATE neurodic_core)
     neurodic_apply_warnings(neurodic_cpp_tests)

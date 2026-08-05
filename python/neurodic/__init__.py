@@ -8,8 +8,6 @@ Dependencies: compiled pybind11 extension. TODO: keep scientific kernels in C++.
 
 from pkgutil import extend_path
 
-from .api import calibrate, ndef_dic, pin_dic
-
 __path__ = extend_path(__path__, __name__)
 
 try:
@@ -17,10 +15,15 @@ try:
 except ImportError:
     _neurodic = None
 
+from .api import calibrate, ndef_dic, pin_dic
+from . import calibration
+from . import seeds
+from . import models
+
 
 def native_available() -> bool:
     """Return whether the compiled C++ extension is importable."""
     return _neurodic is not None
 
 
-__all__ = ["calibrate", "ndef_dic", "pin_dic", "native_available"]
+__all__ = ["calibrate", "calibration", "models", "seeds", "ndef_dic", "pin_dic", "native_available"]

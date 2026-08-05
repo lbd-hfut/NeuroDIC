@@ -32,10 +32,16 @@ elseif(NEURODIC_BUILD_PYTHON)
         "Install pybind11 or pass pybind11_DIR to enable Python bindings.")
 endif()
 
-if(NEURODIC_USE_OPENCV)
+if(NEURODIC_BUILD_TRADITIONAL_CALIBRATION)
+    # OpenCV 5 renamed calib3d/features2d to calib/features.  Do not request
+    # component names so this port works with both the OpenCV 4 and 5 packages.
+    find_package(OpenCV REQUIRED)
+elseif(NEURODIC_USE_OPENCV)
     find_package(OpenCV QUIET)
 endif()
 
-if(NEURODIC_USE_EIGEN)
+if(NEURODIC_BUILD_TRADITIONAL_CALIBRATION)
+    find_package(Eigen3 REQUIRED)
+elseif(NEURODIC_USE_EIGEN)
     find_package(Eigen3 QUIET)
 endif()
