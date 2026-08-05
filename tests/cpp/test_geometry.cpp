@@ -4,7 +4,9 @@
 #include "neurodic/calibration/calibration_result.hpp"
 #include "neurodic/calibration/camera_model.hpp"
 #include "neurodic/geometry/ndef_geometry.hpp"
+#include "neurodic/geometry/projection.hpp"
 #include "neurodic/geometry/stereo_geometry.hpp"
+#include "neurodic/geometry/triangulation.hpp"
 
 void test_geometry() {
     static_assert(!std::is_same_v<neurodic::StereoGeometry, neurodic::NDeFGeometry>);
@@ -22,4 +24,27 @@ void test_geometry() {
     result.type = neurodic::CalibrationType::MONO;
     result.cameras = {camera};
     result.validate();
+
+    neurodic::CameraModel left = camera;
+    left.intrinsics = torch::eye(3, torch::kFloat64);
+    left.translation = torch::zeros({3}, torch::kFloat64);
+    left.distortion = torch::zeros({5}, torch::kFloat64);
+    neurodic::CameraModel right = left;
+    right.translation = torch::tensor({1., 0., 0.}, torch::kFloat64);
+    auto point = torch::tensor({{0., 0., 5.}}, torch::kFloat64);
+    auto left_uv = neurodic::project_points(point, left.intrinsics, left.rotation, left.translation, left.distortion);
+    auto right_uv = neurodic::project_points(point, right.intrinsics, right.rotation, right.translation, right.distortion);
+    auto reconstruction = neurodic::triangulate_stereo(left_uv, right_uv, left, right);
+    assert(reconstruction.valid.item<bool>());
+    assert(torch::allclose(reconstruction.points, point, 1e-9, 1e-9));
+
+    auto differentiable_point = point.clone();
+    differentiable_point.requires_grad_(true);
+    neurodic::NDeFGeometry ndef({left, right});
+    auto projected = ndef.project_reference_surface(differentiable_point);
+    assert(projected.uv.sizes() == torch::IntArrayRef({1, 2, 2}));
+    assert(torch::allclose(projected.uv.select(1, 0), left_uv, 1e-12, 1e-12));
+    projected.uv.sum().backward();
+    assert(differentiable_point.grad().defined());
+    assert(ndef.visibility(point).all().item<bool>());
 }

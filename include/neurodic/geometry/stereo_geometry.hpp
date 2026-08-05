@@ -1,24 +1,24 @@
-/**
- * Stereo geometry engine.
- *
- * Responsibilities: handle stereo projection, reconstruction, and 3D displacement.
- * Inputs: stereo correspondence tensors and calibration result.
- * Outputs: 3D reference/current/displacement tensors.
- * Ownership: future calibration state.
- * Differentiable: PARTIAL. Tensor operations are required when inside loss path.
- * TODO(NeuroDIC): validate stereo reconstruction formulas before implementation.
- */
+/** CPU stereo reconstruction wrapper for post-solve 3D fields. */
 #pragma once
 
 #include "neurodic/geometry/geometry.hpp"
+#include "neurodic/geometry/triangulation.hpp"
 
 namespace neurodic {
 
 class StereoGeometry : public Geometry {
 public:
-    torch::Tensor reconstruct_reference(const torch::Tensor& coordinates) const;
-    torch::Tensor reconstruct_current(const torch::Tensor& coordinates) const;
+    StereoGeometry(CameraModel left_camera, CameraModel right_camera, ReconstructionOptions options = {});
+    ReconstructionResult reconstruct_reference(const torch::Tensor& left_coordinates,
+                                               const torch::Tensor& right_coordinates) const;
+    ReconstructionResult reconstruct_current(const torch::Tensor& left_coordinates,
+                                             const torch::Tensor& right_coordinates) const;
     torch::Tensor displacement_3d(const torch::Tensor& reference, const torch::Tensor& current) const;
+
+private:
+    CameraModel left_camera_;
+    CameraModel right_camera_;
+    ReconstructionOptions options_;
 };
 
 }  // namespace neurodic

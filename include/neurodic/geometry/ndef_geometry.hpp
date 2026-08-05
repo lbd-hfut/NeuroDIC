@@ -1,24 +1,24 @@
-/**
- * NDeF multi-view geometry engine.
- *
- * Responsibilities: project reference/deformed surfaces and handle visibility.
- * Inputs: surface/deformation tensors, camera tensors, view metadata.
- * Outputs: projected coordinates and visibility masks.
- * Ownership: future calibration/view state.
- * Differentiable: YES for geometry used in photometric loss.
- * TODO(NeuroDIC): design NDeF-specific geometry without forcing stereo triangulation.
- */
+/** Differentiable multi-view geometry for NDeF photometric optimization. */
 #pragma once
 
+#include <vector>
+
+#include "neurodic/calibration/camera_model.hpp"
 #include "neurodic/geometry/geometry.hpp"
+#include "neurodic/geometry/projection.hpp"
 
 namespace neurodic {
 
 class NDeFGeometry : public Geometry {
 public:
-    torch::Tensor project_reference_surface(const torch::Tensor& surface) const;
-    torch::Tensor project_deformed_surface(const torch::Tensor& surface, const torch::Tensor& deformation) const;
+    explicit NDeFGeometry(std::vector<CameraModel> cameras);
+    MultiViewProjectionResult project_reference_surface(const torch::Tensor& surface) const;
+    MultiViewProjectionResult project_deformed_surface(const torch::Tensor& surface,
+                                                        const torch::Tensor& deformation) const;
     torch::Tensor visibility(const torch::Tensor& surface) const;
+
+private:
+    std::vector<CameraModel> cameras_;
 };
 
 }  // namespace neurodic
