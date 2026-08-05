@@ -4,7 +4,14 @@ roi: single
 interpolation:
   type: bspline
   degree: 5
-calibration: calibration_colmap.yaml
+calibration: calibration.yaml
+model:
+  # NDeFSolver owns the 3 -> 32x5 -> 3 tanh topology.
+  fourier_encoding:
+    enabled: false
+    num_frequencies: 6
+    include_input: true
+    angular_scale: 3.141592653589793
 notes:
   - Public config intentionally does not expose arbitrary NDeF topology.
   - Internal NDeF architecture is controlled by C++ NDeFSolver.

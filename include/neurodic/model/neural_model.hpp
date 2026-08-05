@@ -14,9 +14,9 @@
 
 namespace neurodic {
 
-class NeuralModel {
+class NeuralModel : public torch::nn::Module {
 public:
-    virtual ~NeuralModel() = default;
+    ~NeuralModel() override = default;
     virtual torch::Tensor forward(const torch::Tensor& coordinates) = 0;
 };
 

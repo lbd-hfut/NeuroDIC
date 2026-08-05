@@ -13,13 +13,15 @@
 #include <memory>
 #include <string>
 
+#include "neurodic/model/mlp.hpp"
 #include "neurodic/model/neural_model.hpp"
 
 namespace neurodic {
 
 class ModelFactory {
 public:
-    std::unique_ptr<NeuralModel> create_pin_model(const std::string& model_type) const;
+    std::shared_ptr<NeuralModel> create_pin_model(const std::string& model_type,
+                                                   const PINModelOptions& options = {}) const;
 };
 
 }  // namespace neurodic
