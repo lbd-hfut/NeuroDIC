@@ -17,7 +17,9 @@ NDeFDepthModel::NDeFDepthModel(int cameras, NDeFDepthModelOptions options) : opt
 torch::Tensor NDeFDepthModel::encode(const torch::Tensor& uv) const {
     if (!options_.positional_encoding_enabled) return uv;
     constexpr double pi = 3.14159265358979323846;
-    auto angles = uv.unsqueeze(-1) * frequencies_.to(uv.device(),uv.scalar_type()).view({1,1,-1}) * pi;
+    // Match Python FourierPixelEncoding exactly: [N,2] -> [N,F,2], then
+    // flatten frequency-major [sin(x_f), sin(y_f), cos(x_f), cos(y_f)].
+    auto angles = uv.unsqueeze(1) * frequencies_.to(uv.device(),uv.scalar_type()).view({1,-1,1}) * pi;
     return torch::cat(torch::TensorList{torch::sin(angles), torch::cos(angles)}, -1).flatten(1);
 }
 torch::Tensor NDeFDepthModel::forward(torch::Tensor uv, torch::Tensor camera_indices) {

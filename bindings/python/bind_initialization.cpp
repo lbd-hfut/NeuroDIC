@@ -43,7 +43,9 @@ void bind_initialization(py::module_& module) {
         .def_readwrite("temporal_ncc_threshold", &neurodic::NDeFSparsePrecalculationOptions::temporal_ncc_threshold)
         .def_readwrite("min_texture_std", &neurodic::NDeFSparsePrecalculationOptions::min_texture_std)
         .def_readwrite("max_reprojection_error", &neurodic::NDeFSparsePrecalculationOptions::max_reprojection_error)
-        .def_readwrite("displacement_mad_threshold", &neurodic::NDeFSparsePrecalculationOptions::displacement_mad_threshold);
+        .def_readwrite("displacement_mad_threshold", &neurodic::NDeFSparsePrecalculationOptions::displacement_mad_threshold)
+        .def_readwrite("match_batch_size", &neurodic::NDeFSparsePrecalculationOptions::match_batch_size)
+        .def_readwrite("random_seed", &neurodic::NDeFSparsePrecalculationOptions::random_seed);
     py::class_<neurodic::NDeFSparsePrecalculationResult>(module, "NDeFSparsePrecalculationResult")
         .def_readonly("source_camera", &neurodic::NDeFSparsePrecalculationResult::source_camera)
         .def_readonly("source_uv", &neurodic::NDeFSparsePrecalculationResult::source_uv)
@@ -126,6 +128,8 @@ void bind_initialization(py::module_& module) {
         .def_readwrite("fourier_encoding", &neurodic::PINModelOptions::fourier_encoding);
     py::class_<neurodic::NDeFModelOptions>(module, "NDeFModelOptions")
         .def(py::init<>())
+        .def_readwrite("hidden_dim", &neurodic::NDeFModelOptions::hidden_dim)
+        .def_readwrite("hidden_layers", &neurodic::NDeFModelOptions::hidden_layers)
         .def_readwrite("output_scale", &neurodic::NDeFModelOptions::output_scale)
         .def_readwrite("fourier_encoding", &neurodic::NDeFModelOptions::fourier_encoding);
     py::class_<neurodic::MLPModel, std::shared_ptr<neurodic::MLPModel>>(module, "PINMLPModel")

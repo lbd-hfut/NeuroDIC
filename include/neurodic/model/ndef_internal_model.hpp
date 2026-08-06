@@ -9,6 +9,8 @@
 namespace neurodic {
 
 struct NDeFModelOptions {
+    int hidden_dim{32};
+    int hidden_layers{5};
     double output_scale{1.0};
     FourierEncodingOptions fourier_encoding{};
 };

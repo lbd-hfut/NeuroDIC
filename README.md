@@ -1,9 +1,7 @@
 # NeuroDIC
 
-Status: Architecture Reconstruction / C++-First Skeleton
-
-NeuroDIC is being reconstructed around a C++ scientific core, a LibTorch
-differentiable path, pybind11 bindings, and a thin Python API.
+NeuroDIC is a C++-first digital image correlation project with a LibTorch
+differentiable core, pybind11 bindings, and a thin Python workflow layer.
 
 ```text
 NeuroDIC
@@ -11,55 +9,261 @@ NeuroDIC
 │   ├── PIN-DIC 2D
 │   └── PIN-DIC Stereo
 └── NDeFSolver
-    └── NDeF Multi-view DIC
+    └── NDeF multi-view surface deformation
 ```
 
-The repository currently contains interfaces, TODOs, binding stubs, CMake
-targets, documentation, tests, and examples. It does not contain validated
-PIN-DIC or NDeF-DIC numerical algorithms yet.
+The current repository contains working PIN and NDeF numerical paths. The NDeF
+CylinderDIC route includes reference-surface reconstruction, sparse patch-DIC
+displacement-scale estimation, neural deformation training, full-surface
+inference, checkpoints, diagnostics, and 3D visualizations.
 
-## Architecture Rules
+## Development environment
+
+The authoritative environment and troubleshooting notes are in
+[`docs/development_environment.md`](docs/development_environment.md). For the
+validated local setup, use:
+
+```bash
+export ND_ENV=/home/a306/miniconda3/envs/neurodic
+export CXX_COMPILER=$ND_ENV/bin/x86_64-conda-linux-gnu-g++
+export C_COMPILER=$ND_ENV/bin/x86_64-conda-linux-gnu-gcc
+export CUDAHOSTCXX=$CXX_COMPILER
+
+$ND_ENV/bin/cmake -S . -B build -G Ninja \
+    -DCMAKE_PREFIX_PATH=$ND_ENV \
+    -DCMAKE_CXX_COMPILER=$CXX_COMPILER \
+    -DCMAKE_C_COMPILER=$C_COMPILER \
+    -DPython_EXECUTABLE=$ND_ENV/bin/python \
+    -DNEURODIC_ENABLE_TORCH=ON \
+    -DNEURODIC_BUILD_PYTHON=ON \
+    -DNEURODIC_BUILD_TESTS=ON \
+    -DNEURODIC_USE_EIGEN=OFF \
+    -DNEURODIC_USE_OPENCV=OFF
+
+CUDAHOSTCXX=$CXX_COMPILER $ND_ENV/bin/cmake --build build -j
+CUDAHOSTCXX=$CXX_COMPILER $ND_ENV/bin/ctest --test-dir build --output-on-failure
+```
+
+Do not use base Python or the system `g++` for CUDA/LibTorch builds. For
+build-tree Python imports:
+
+```bash
+export PYTHONPATH=$PWD/python:$PWD/build/python
+export MPLCONFIGDIR=/tmp/neurodic-matplotlib
+$ND_ENV/bin/python -c "import neurodic; print(neurodic.native_available())"
+```
+
+## Running NDeF clearly
+
+The validated example configuration is
+[`config/ndef_multiview.yaml`](config/ndef_multiview.yaml), and its case root is
+`case/Multi/CylinderDIC`.
+
+### NDeF input contract
+
+Before deformation training, the case needs:
+
+- synchronized images under `images/<camera>/`;
+- coherent scaled cameras in
+  `result/calibration/calibration_result_scaled.json`;
+- per-camera ROI masks in `result/mask/per_camera/`;
+- the reference-surface dataset
+  `result/surface/deformation_surface_dataset.npz`.
+
+The surface NPZ contains:
+
+```text
+points, normals, source_camera, visibility_mask, projected_uv,
+projected_depth, depth_abs_error, visible_counts, cam_names
+```
+
+`points`, `visibility_mask`, `projected_uv`, and `visible_counts` directly feed
+deformation training. The remaining fields are retained in output artifacts for
+diagnostics and future refinements.
+
+Image selection currently follows the sorted files in each camera folder:
+
+- the first image is the reference image;
+- `case.frame: -1` selects the last image as the current/deformed image;
+- another integer may be used to select a different synchronized current frame.
+
+### Stage 1: reconstruct the reference surface
+
+Run this only when the surface dataset does not already exist:
+
+```bash
+$ND_ENV/bin/python -u -c \
+  "import neurodic; neurodic.pretrain_ndef_surface('config/ndef_multiview.yaml')"
+```
+
+This runs sparse depth pretraining, dense ZNSSD refinement, dense inference, and
+visibility/depth-consistency fusion. The deformation hand-off is written to:
+
+```text
+case/Multi/CylinderDIC/result/surface/deformation_surface_dataset.npz
+```
+
+If this NPZ already exists and is accepted, do not rerun Stage 1; start from
+Stage 2. Surface fusion sampling and deformation-training point sampling are
+separate algorithms.
+
+### Stage 2: precompute the deformation scale
+
+```bash
+$ND_ENV/bin/python -u -c \
+  "import neurodic; neurodic.ndef_sparse_precalculation('config/ndef_multiview.yaml')"
+```
+
+This stage runs the C++/LibTorch sparse multi-view patch-DIC route:
+
+1. seeded spatially distributed ROI points per source camera;
+2. temporal and cross-camera batched NCC matching;
+3. multi-view reference/current triangulation;
+4. reprojection filtering and displacement-magnitude MAD filtering;
+5. mean/median/p75/p90/max displacement-scale statistics.
+
+Outputs:
+
+```text
+result/ndef/precalculation/sparse_tracks.npz
+result/ndef/precalculation/sparse_scale.json
+```
+
+`precalculation.statistic` selects which robust statistic becomes the neural
+field output scale. CylinderDIC currently uses `mean`.
+
+### Stage 3: train and infer the deformation field
+
+```bash
+$ND_ENV/bin/python -u -c \
+  "import neurodic; neurodic.ndef_dic('config/ndef_multiview.yaml')"
+```
+
+The solver consumes every reference-surface point as one global continuous
+field. Each optimizer step samples point indices uniformly with replacement.
+The network predicts three world-coordinate displacement components:
+
+```text
+X_current = X_reference + [Ux, Uy, Uz]
+```
+
+The CylinderDIC YAML currently uses:
+
+- 5 hidden Tanh layers of width 32;
+- Fourier encoding disabled;
+- batch size 51,172;
+- 1,000 epochs and `ceil(N / batch)` steps per epoch;
+- AdamW with learning rate 0.003 and zero weight decay;
+- 5x5 photometric MSE patches;
+- fixed reference visibility and `1 / visible_counts` camera weighting;
+- smoothness weight zero, matching the original Python configuration;
+- deterministic training seed 23.
+
+Important configuration groups:
+
+| YAML group | Purpose |
+|---|---|
+| `case` | case root, images, calibration, masks, current frame, surface NPZ |
+| `deformation_model` | hidden width/layers, Fourier encoding, fallback output scale |
+| `precalculation.sparse` | ROI seeds, NCC searches, thresholds, batch and seed |
+| `precalculation` | sparse displacement file and selected scale statistic |
+| `deformation_training` | device, epochs, batch, optimizer, loss, patches and seed |
+| `output` | result and visualization roots |
+
+### Run all NDeF stages
+
+For a new case that already has calibration and ROI masks:
+
+```bash
+$ND_ENV/bin/python -u - <<'PY'
+import neurodic
+
+config = "config/ndef_multiview.yaml"
+neurodic.pretrain_ndef_surface(config)       # skip when the accepted surface NPZ exists
+neurodic.ndef_sparse_precalculation(config)
+neurodic.ndef_dic(config)
+PY
+```
+
+For the current CylinderDIC case, whose surface NPZ already exists, run only:
+
+```bash
+$ND_ENV/bin/python -u - <<'PY'
+import neurodic
+
+config = "config/ndef_multiview.yaml"
+neurodic.ndef_sparse_precalculation(config)
+neurodic.ndef_dic(config)
+PY
+```
+
+### NDeF outputs
+
+Numerical outputs are under `case/Multi/CylinderDIC/result/ndef/`:
+
+```text
+precalculation/sparse_tracks.npz
+precalculation/sparse_scale.json
+reconstruct/reference_surface.npz
+reconstruct/current_surface.npz
+deformation/reference_to_current.npz
+deformation/deformation_field.pt
+deformation/deformation_field_best.pt
+diagnostics/projection.npz
+diagnostics/training.npz
+diagnostics/training_history.json
+diagnostics/summary.json
+```
+
+The deformation NPZ contains reference/current points, `[Ux,Uy,Uz]`, displacement
+magnitude, and compatible coordinate-scale arrays. `training.npz` contains the
+eight-column training history, per-point sample counts, coordinate normalization,
+batch/epoch semantics, output scale, and seed.
+
+True 3D visualizations are written under
+`case/Multi/CylinderDIC/visualization/ndef/`:
+
+```text
+reconstruct/reference_surface.png
+reconstruct/current_surface.png
+deformation/magnitude.png
+deformation/displacement_x.png
+deformation/displacement_y.png
+deformation/displacement_z.png
+deformation/displacement_components_3d.png
+diagnostics/training_loss.png
+diagnostics/valid_observations.png
+```
+
+The reconstruction figures use actual XYZ axes. The deformation figures plot
+the reference surface in 3D and color it by magnitude, Ux, Uy, or Uz; component
+color scales are symmetric around zero.
+
+The detailed Python-to-C++ deformation audit is in
+[`docs/migration_ndef_deformation.md`](docs/migration_ndef_deformation.md).
+
+## Architecture rules
 
 1. C++ is the primary scientific implementation language.
-2. LibTorch owns the differentiable core.
-3. The model-to-loss path uses `torch::Tensor` throughout.
-4. Python access is provided through pybind11 as `neurodic._neurodic`.
-5. The Python package is intentionally thin and lives under `python/neurodic`.
-6. The first version solves one ROI as one continuous neural field.
-7. One `PINSolver` handles both planar 2D and stereo PIN-DIC.
-8. `NDeFSolver` owns an internally controlled architecture.
-9. B-spline interpolation supports degrees 1, 3, and 5 only.
-10. Calibration is performed before problem construction, not inside solvers.
-11. `Representation` describes the physical field; `Model` describes the neural network.
-12. MSPINN/FBPINN multi-region domain decomposition is out of scope.
+2. LibTorch owns the differentiable model-to-loss path.
+3. Python performs configuration assembly, file I/O, binding calls, export, and
+   visualization.
+4. Calibration and reference-surface reconstruction happen before deformation
+   problem construction.
+5. One NDeF solve represents the selected surface as one continuous neural
+   deformation field.
+6. NumPy/OpenCV/Eigen round-trips are not allowed inside a differentiable path.
 
-## Differentiability Rule
-
-Any operation between neural-field output and loss evaluation must preserve the
-PyTorch autograd graph. No NumPy/Eigen/OpenCV round-trip is allowed inside the
-differentiable path.
-
-## Layout
+## Repository layout
 
 ```text
 include/neurodic/       Public C++ interfaces
-src/                    C++ skeleton implementations
-bindings/python/        pybind11 binding skeleton for neurodic._neurodic
-python/neurodic/        Thin Python API
-tests/cpp/              C++ architecture and invariant tests
-tests/python/           Python import and binding smoke tests
-docs/                   Architecture and differentiability notes
+src/                    C++ and LibTorch implementations
+bindings/python/        pybind11 bindings for neurodic._neurodic
+python/neurodic/        Thin Python API, I/O, configuration, and plots
+config/                 Example solver configurations
+tests/cpp/              C++ numerical and invariant tests
+tests/python/           Python import and binding tests
+docs/                   Architecture, environment, and migration notes
+case/                   Local examples and ignored generated results
 ```
-
-## Build Notes
-
-LibTorch is required for the differentiable core. If CMake cannot find Torch,
-pass the PyTorch CMake prefix:
-
-```bash
-cmake -S . -B build -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
-cmake --build build -j
-ctest --test-dir build --output-on-failure
-```
-
-The pybind11 extension is built only when pybind11 is discoverable by CMake.

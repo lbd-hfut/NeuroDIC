@@ -35,6 +35,7 @@ void test_ndef_precalculation() {
                              {{30.0, 34.0}, {22.0, 34.0}}, {{34.0, 34.0}, {26.0, 34.0}}}, torch::kFloat64);
     neurodic::NDeFSparsePrecalculationOptions options;
     options.points_per_camera = 4; options.patch_radius = 2; options.cross_search_radius = 3;
+    options.random_seed = 23;
     options.temporal_search_radius = 2; options.min_texture_std = 0.0;
     options.cross_ncc_threshold = 0.8; options.temporal_ncc_threshold = 0.8; options.max_reprojection_error = 0.2;
     auto sparse = neurodic::NDeFSparsePrecalculator(options).solve(torch::stack({base, right_reference}), torch::stack({shifted, right_current}),

@@ -37,6 +37,8 @@ struct NDeFSparsePrecalculationOptions {
     double min_texture_std{0.02};
     double max_reprojection_error{3.0};
     double displacement_mad_threshold{5.0};
+    int match_batch_size{64};
+    int64_t random_seed{23};
 };
 
 struct NDeFSparsePrecalculationResult {

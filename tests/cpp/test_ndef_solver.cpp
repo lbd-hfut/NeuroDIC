@@ -47,4 +47,14 @@ void test_ndef_solver() {
     assert(torch::allclose(result.surface.coordinates, surface * 2.0F));
     assert(result.sfm_to_world_scale == 2.0);
     assert(result.diagnostics.iterations == 2);
+    assert(result.training_history.sizes() == torch::IntArrayRef({2, 8}));
+    assert(result.training_batch_size == 4);
+    assert(result.steps_per_epoch == 1);
+    assert(result.training_sample_counts.sum().item<int64_t>() == 8);
+    assert(result.training_sample_counts.size(0) == surface.size(0));
+    assert(result.coordinate_center.sizes() == torch::IntArrayRef({3}));
+    assert(result.coordinate_scale.min().item<float>() > 0.0F);
+    assert(!result.model_parameter_names.empty());
+    assert(result.model_state.size() == result.model_parameter_names.size());
+    assert(result.last_model_state.size() == result.model_parameter_names.size());
 }

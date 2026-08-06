@@ -42,6 +42,18 @@ void bind_result(py::module_& module) {
         .def_readonly("reference_surface_sfm", &neurodic::NDeFResult::reference_surface_sfm)
         .def_readonly("current_surface_sfm", &neurodic::NDeFResult::current_surface_sfm)
         .def_readonly("deformation_sfm", &neurodic::NDeFResult::deformation_sfm)
+        .def_readonly("training_history", &neurodic::NDeFResult::training_history)
+        .def_readonly("training_sample_counts", &neurodic::NDeFResult::training_sample_counts)
+        .def_readonly("coordinate_center", &neurodic::NDeFResult::coordinate_center)
+        .def_readonly("coordinate_scale", &neurodic::NDeFResult::coordinate_scale)
+        .def_readonly("training_batch_size", &neurodic::NDeFResult::training_batch_size)
+        .def_readonly("steps_per_epoch", &neurodic::NDeFResult::steps_per_epoch)
+        .def_readonly("completed_epochs", &neurodic::NDeFResult::completed_epochs)
+        .def_readonly("random_seed", &neurodic::NDeFResult::random_seed)
+        .def_readonly("output_scale", &neurodic::NDeFResult::output_scale)
+        .def_readonly("model_parameter_names", &neurodic::NDeFResult::model_parameter_names)
+        .def_readonly("model_state", &neurodic::NDeFResult::model_state)
+        .def_readonly("last_model_state", &neurodic::NDeFResult::last_model_state)
         .def_readonly("sfm_to_world_scale", &neurodic::NDeFResult::sfm_to_world_scale)
         .def_readonly("diagnostics", &neurodic::NDeFResult::diagnostics);
     py::class_<neurodic::NDeFSurfaceResult>(module,"NDeFSurfaceResult").def_readonly("sparse_prediction",&neurodic::NDeFSurfaceResult::sparse_prediction).def_readonly("query_depth",&neurodic::NDeFSurfaceResult::query_depth).def_readonly("query_uv",&neurodic::NDeFSurfaceResult::query_uv).def_readonly("query_cameras",&neurodic::NDeFSurfaceResult::query_cameras).def_readonly("dense_uv",&neurodic::NDeFSurfaceResult::dense_uv).def_readonly("dense_cameras",&neurodic::NDeFSurfaceResult::dense_cameras).def_readonly("dense_targets",&neurodic::NDeFSurfaceResult::dense_targets).def_readonly("dense_depth",&neurodic::NDeFSurfaceResult::dense_depth).def_readonly("dense_world",&neurodic::NDeFSurfaceResult::dense_world).def_readonly("dense_history",&neurodic::NDeFSurfaceResult::dense_history).def_readonly("dense_field_uv",&neurodic::NDeFSurfaceResult::dense_field_uv).def_readonly("dense_field_cameras",&neurodic::NDeFSurfaceResult::dense_field_cameras).def_readonly("dense_field_depth",&neurodic::NDeFSurfaceResult::dense_field_depth).def_readonly("dense_field_world",&neurodic::NDeFSurfaceResult::dense_field_world).def_readonly("depth_mean",&neurodic::NDeFSurfaceResult::depth_mean).def_readonly("depth_std",&neurodic::NDeFSurfaceResult::depth_std).def_readonly("diagnostics",&neurodic::NDeFSurfaceResult::diagnostics);

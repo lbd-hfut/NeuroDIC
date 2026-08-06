@@ -45,8 +45,20 @@ public:
     torch::Tensor visible_counts;
     std::vector<CameraModel> cameras;
     NDeFModelOptions model_options;
-    int photometric_iterations{1000};
-    int photometric_sample_count{16384};
+    // NDeF-DIC train_deformation.py semantics: each epoch has ceil(N / batch)
+    // steps and every step samples points with replacement using randint.
+    int training_epochs{100};
+    int batch_size{0};  // 0 selects automatic batch sizing.
+    int auto_batch_start{1024};
+    int auto_batch_max{0};  // 0 means N.
+    double memory_fraction{0.80};
+    int max_steps_per_epoch{0};  // 0 means uncapped.
+    int prediction_batch_size{262144};
+    int64_t random_seed{23};
+    // Legacy aliases retained for source compatibility. When explicitly set,
+    // photometric_iterations overrides the epoch-derived total step count.
+    int photometric_iterations{0};
+    int photometric_sample_count{0};
     int bspline_degree{5};
     double photometric_learning_rate{5e-4};
     double weight_decay{0.0};

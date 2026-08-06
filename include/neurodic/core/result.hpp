@@ -14,6 +14,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 #include <torch/torch.h>
 
 #include "neurodic/core/types.hpp"
@@ -66,6 +67,20 @@ struct NDeFResult {
     torch::Tensor reference_surface_sfm;
     torch::Tensor current_surface_sfm;
     torch::Tensor deformation_sfm;
+    // [steps,8]: epoch, step, total, photo, smoothness, valid pairs,
+    // supervised pairs, displacement RMS.
+    torch::Tensor training_history;
+    torch::Tensor training_sample_counts; // CPU int64 [N]
+    torch::Tensor coordinate_center;       // CPU float32 [3]
+    torch::Tensor coordinate_scale;        // CPU float32 [3]
+    int training_batch_size{0};
+    int steps_per_epoch{0};
+    int completed_epochs{0};
+    int64_t random_seed{0};
+    double output_scale{1.0};
+    std::vector<std::string> model_parameter_names;
+    std::vector<torch::Tensor> model_state;       // best state, CPU tensors
+    std::vector<torch::Tensor> last_model_state;  // final optimizer step
     double sfm_to_world_scale{1.0};
     SolverDiagnostics diagnostics;
 };
@@ -73,7 +88,7 @@ struct NDeFSurfaceResult {
     torch::Tensor sparse_prediction, query_depth, query_uv, query_cameras;
     // Dense stage exports are sampled ROI centres after topology filtering.
     torch::Tensor dense_uv, dense_cameras, dense_targets, dense_depth, dense_world, dense_history;
-    // Final network inference on every exported ROI query-grid point.  These
+    // Final network inference on every ROI pixel. These
     // fields are the dense charts consumed by visibility/depth fusion.
     torch::Tensor dense_field_uv, dense_field_cameras, dense_field_depth, dense_field_world;
     double depth_mean{0.0}, depth_std{1.0}; SolverDiagnostics diagnostics;

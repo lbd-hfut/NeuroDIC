@@ -8,18 +8,18 @@ NDeFInternalModel::NDeFInternalModel(NDeFModelOptions options,
                                      torch::Tensor coordinate_center,
                                      torch::Tensor coordinate_scale)
     : options_(options) {
-    if (options_.output_scale <= 0.0 || !coordinate_center.defined() || !coordinate_scale.defined() ||
+    if (options_.hidden_dim < 1 || options_.hidden_layers < 1 || options_.output_scale <= 0.0 || !coordinate_center.defined() || !coordinate_scale.defined() ||
         coordinate_center.numel() != 3 || coordinate_scale.numel() != 3)
         throw ValidationError("NDeF model requires positive output scale and [3] coordinate normalization");
     coordinate_center_ = register_buffer("coordinate_center", coordinate_center.detach().to(torch::kFloat32).reshape({1, 3}));
     coordinate_scale_ = register_buffer("coordinate_scale", coordinate_scale.detach().to(torch::kFloat32).reshape({1, 3}).clamp_min(1e-8));
     encoder_ = register_module("fourier_encoding", FourierEncoding(3, options_.fourier_encoding));
     int input_dim = encoder_->output_dim();
-    for (int index = 0; index <= 5; ++index) {
-        const int output_dim = index == 5 ? 3 : 32;
+    for (int index = 0; index <= options_.hidden_layers; ++index) {
+        const int output_dim = index == options_.hidden_layers ? 3 : options_.hidden_dim;
         auto layer = register_module("linear_" + std::to_string(index), torch::nn::Linear(input_dim, output_dim));
         torch::NoGradGuard no_grad;
-        if (index == 5) {
+        if (index == options_.hidden_layers) {
             layer->weight.normal_(0.0, 1e-5);
         } else {
             torch::nn::init::xavier_uniform_(layer->weight, 5.0 / 3.0);

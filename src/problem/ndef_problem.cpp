@@ -44,7 +44,10 @@ void NDeFProblem::validate() const {
     if (visible_counts.defined() && (visible_counts.dim() != 1 || visible_counts.size(0) != points ||
         !visible_counts.is_floating_point())) throw ValidationError("NDeF visible_counts must be floating [N]");
     validate_bspline_degree(bspline_degree);
-    if (model_options.output_scale <= 0.0 || photometric_iterations < 0 || photometric_sample_count < 1 ||
+    if (model_options.hidden_dim < 1 || model_options.hidden_layers < 1 || model_options.output_scale <= 0.0 ||
+        training_epochs < 0 || batch_size < 0 || auto_batch_start < 1 || auto_batch_max < 0 ||
+        memory_fraction <= 0.0 || memory_fraction > 1.0 || max_steps_per_epoch < 0 || prediction_batch_size < 1 ||
+        random_seed < 0 || photometric_iterations < 0 || photometric_sample_count < 0 ||
         photometric_learning_rate <= 0.0 || weight_decay < 0.0 || smoothness_weight < 0.0 || patch_radius < 0 ||
         min_valid_patch_ratio <= 0.0 || min_valid_patch_ratio > 1.0 || invalid_patch_penalty < 0.0 ||
         sfm_to_world_scale <= 0.0)

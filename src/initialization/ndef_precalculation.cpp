@@ -4,8 +4,10 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <random>
 #include <set>
 #include <tuple>
+#include <torch/nn/functional/fold.h>
 
 #include "neurodic/core/exceptions.hpp"
 #include "neurodic/geometry/triangulation.hpp"
@@ -41,68 +43,93 @@ torch::Tensor normalized_image(const torch::Tensor& image) {
     return value.detach().amax().item<double>() > 1.5 ? value / 255.0F : value;
 }
 
-bool patch_inside_and_valid(const torch::Tensor& mask, int y, int x, int radius) {
-    const auto height = mask.size(0), width = mask.size(1);
-    if (x - radius < 0 || y - radius < 0 || x + radius >= width || y + radius >= height) return false;
-    return mask.index({Slice(y - radius, y + radius + 1), Slice(x - radius, x + radius + 1)}).all().item<bool>();
+std::pair<torch::Tensor, torch::Tensor> centered_windows(const torch::Tensor& image,
+                                                         const torch::Tensor& centers, int radius) {
+    const auto height = image.size(0), width = image.size(1);
+    auto rounded = torch::round(centers).to(torch::kLong);
+    auto x = rounded.select(1, 0), y = rounded.select(1, 1);
+    auto valid = (x >= radius) & (x < width - radius) & (y >= radius) & (y < height - radius);
+    auto safe_x = x.clamp(radius, width - radius - 1), safe_y = y.clamp(radius, height - radius - 1);
+    auto offsets = torch::arange(-radius, radius + 1, torch::TensorOptions().device(image.device()).dtype(torch::kLong));
+    auto yy = safe_y.reshape({-1, 1, 1}) + offsets.reshape({1, -1, 1});
+    auto xx = safe_x.reshape({-1, 1, 1}) + offsets.reshape({1, 1, -1});
+    return {image.index({yy, xx}).unsqueeze(1), valid};
 }
 
-double zncc(const torch::Tensor& source, const torch::Tensor& target) {
-    auto a = source.reshape({-1});
-    auto b = target.reshape({-1});
-    a = a - a.mean(); b = b - b.mean();
-    const double denom = (torch::linalg_vector_norm(a) * torch::linalg_vector_norm(b)).item<double>();
-    return denom > 1e-12 ? (torch::dot(a, b).item<double>() / denom) : -1.0;
-}
+struct TensorMatch { torch::Tensor uv, score, valid; };
 
-struct Match { int x{0}; int y{0}; double score{-1.0}; bool valid{false}; };
-
-Match match_ncc(const torch::Tensor& source_image, const torch::Tensor& source_mask, int source_x, int source_y,
-                const torch::Tensor& target_image, const torch::Tensor& target_mask, int center_x, int center_y,
-                int patch_radius, int search_radius, double threshold) {
-    if (!patch_inside_and_valid(source_mask, source_y, source_x, patch_radius)) return {};
-    const auto patch = source_image.index({Slice(source_y - patch_radius, source_y + patch_radius + 1),
-                                           Slice(source_x - patch_radius, source_x + patch_radius + 1)});
-    Match best;
-    for (int y = center_y - search_radius; y <= center_y + search_radius; ++y) {
-        for (int x = center_x - search_radius; x <= center_x + search_radius; ++x) {
-            if (!patch_inside_and_valid(target_mask, y, x, patch_radius)) continue;
-            const auto candidate = target_image.index({Slice(y - patch_radius, y + patch_radius + 1),
-                                                       Slice(x - patch_radius, x + patch_radius + 1)});
-            const double score = zncc(patch, candidate);
-            if (score > best.score) best = {x, y, score, score >= threshold};
-        }
+TensorMatch match_ncc_batch(const torch::Tensor& source_image, const torch::Tensor& target_image,
+                            const torch::Tensor& source_centers, const torch::Tensor& target_centers,
+                            int patch_radius, int search_radius, int batch_size) {
+    std::vector<torch::Tensor> output_uv, output_score, output_valid;
+    auto values = torch::arange(-search_radius, search_radius + 1, source_centers.options());
+    auto grids = torch::meshgrid({values, values}, "ij");
+    auto search_offsets = torch::stack({grids[1].reshape({-1}), grids[0].reshape({-1})}, 1);
+    for (int64_t start = 0; start < source_centers.size(0); start += batch_size) {
+        const auto stop = std::min<int64_t>(start + batch_size, source_centers.size(0));
+        auto ref_centers = source_centers.slice(0, start, stop);
+        auto tgt_centers = target_centers.slice(0, start, stop);
+        auto [reference_patch, reference_valid] = centered_windows(source_image, ref_centers, patch_radius);
+        auto [target_window, target_valid] = centered_windows(target_image, tgt_centers, patch_radius + search_radius);
+        auto candidates = torch::nn::functional::unfold(target_window,
+            torch::nn::functional::UnfoldFuncOptions(2 * patch_radius + 1));
+        auto reference_flat = reference_patch.reshape({reference_patch.size(0), -1});
+        auto reference_zero = reference_flat - reference_flat.mean(1, true);
+        auto candidate_zero = candidates - candidates.mean(1, true);
+        auto numerator = (candidate_zero * reference_zero.unsqueeze(2)).sum(1);
+        auto denominator = torch::sqrt(reference_zero.square().sum(1, true) * candidate_zero.square().sum(1) + 1e-6F);
+        auto scores = numerator / denominator.clamp_min(1e-6F);
+        auto maximum = scores.max(1);
+        auto best_score = std::get<0>(maximum), best_index = std::get<1>(maximum);
+        output_uv.push_back(tgt_centers + search_offsets.index_select(0, best_index));
+        output_score.push_back(best_score);
+        output_valid.push_back(reference_valid & target_valid & torch::isfinite(best_score));
     }
-    return best;
+    return {torch::cat(output_uv), torch::cat(output_score), torch::cat(output_valid)};
 }
 
 std::vector<std::pair<int, int>> sample_roi(const torch::Tensor& image, const torch::Tensor& mask,
-                                             int count, int radius, double min_texture_std) {
-    std::vector<std::pair<int, int>> textured, fallback;
-    const int height = static_cast<int>(image.size(0)), width = static_cast<int>(image.size(1));
-    // Deterministic grid keeps the same spatial coverage as the original
-    // random-within-grid sampler while avoiding a Python/NumPy RNG dependency.
+                                             int count, int radius, double min_texture_std,
+                                             std::mt19937_64& generator) {
+    std::vector<std::pair<int, int>> points, selected;
+    auto image_cpu = image.to(torch::kCPU).contiguous(), mask_cpu = mask.to(torch::kCPU).to(torch::kBool).contiguous();
+    auto mask_values = mask_cpu.accessor<bool, 2>();
+    const int height = static_cast<int>(image_cpu.size(0)), width = static_cast<int>(image_cpu.size(1));
+    for (int y = radius; y < height - radius; ++y) for (int x = radius; x < width - radius; ++x)
+        if (mask_values[y][x]) points.emplace_back(x, y);
+    if (points.empty()) return selected;
+    int xmin = width, xmax = 0, ymin = height, ymax = 0;
+    for (const auto& point : points) { xmin = std::min(xmin, point.first); xmax = std::max(xmax, point.first);
+        ymin = std::min(ymin, point.second); ymax = std::max(ymax, point.second); }
     const int grid = std::max(1, static_cast<int>(std::ceil(std::sqrt(static_cast<double>(count)))));
     for (int gy = 0; gy < grid; ++gy) for (int gx = 0; gx < grid; ++gx) {
-        const int x0 = radius + gx * std::max(1, (width - 2 * radius) / grid);
-        const int y0 = radius + gy * std::max(1, (height - 2 * radius) / grid);
-        const int x1 = std::min(width - radius - 1, radius + (gx + 1) * std::max(1, (width - 2 * radius) / grid) - 1);
-        const int y1 = std::min(height - radius - 1, radius + (gy + 1) * std::max(1, (height - 2 * radius) / grid) - 1);
-        std::pair<int, int> first_fallback{-1, -1};
-        bool found_textured = false;
-        for (int y = y0; y <= y1 && !found_textured; ++y) for (int x = x0; x <= x1; ++x) {
-            if (!patch_inside_and_valid(mask, y, x, radius)) continue;
-            const auto patch = image.index({Slice(y - radius, y + radius + 1), Slice(x - radius, x + radius + 1)});
+        const double x0 = xmin + (xmax + 1.0 - xmin) * gx / grid;
+        const double x1 = xmin + (xmax + 1.0 - xmin) * (gx + 1) / grid;
+        const double y0 = ymin + (ymax + 1.0 - ymin) * gy / grid;
+        const double y1 = ymin + (ymax + 1.0 - ymin) * (gy + 1) / grid;
+        std::vector<std::pair<int, int>> cell;
+        for (const auto& point : points) if (point.first >= x0 && point.first < x1 && point.second >= y0 && point.second < y1)
+            cell.push_back(point);
+        std::shuffle(cell.begin(), cell.end(), generator);
+        for (size_t index = 0; index < std::min<size_t>(20, cell.size()); ++index) {
+            const auto [x, y] = cell[index];
+            const auto patch = image_cpu.index({Slice(y - radius, y + radius + 1), Slice(x - radius, x + radius + 1)});
             if (patch.std(false).item<double>() >= min_texture_std) {
-                textured.emplace_back(x, y); found_textured = true; break;
+                selected.emplace_back(x, y); break;
             }
-            if (first_fallback.first < 0) first_fallback = {x, y};
         }
-        if (!found_textured && first_fallback.first >= 0) fallback.push_back(first_fallback);
+        if (static_cast<int>(selected.size()) >= count) return selected;
     }
-    textured.insert(textured.end(), fallback.begin(), fallback.end());
-    if (static_cast<int>(textured.size()) > count) textured.resize(count);
-    return textured;
+    std::shuffle(points.begin(), points.end(), generator);
+    std::set<std::pair<int, int>> existing(selected.begin(), selected.end());
+    for (const auto& point : points) {
+        if (existing.count(point)) continue;
+        const auto [x, y] = point;
+        const auto patch = image_cpu.index({Slice(y - radius, y + radius + 1), Slice(x - radius, x + radius + 1)});
+        if (patch.std(false).item<double>() >= min_texture_std) { selected.push_back(point); existing.insert(point); }
+        if (static_cast<int>(selected.size()) >= count) break;
+    }
+    return selected;
 }
 
 std::vector<int> neighbours(int source, int views, int requested) {
@@ -128,7 +155,7 @@ NDeFSparsePrecalculationResult NDeFSparsePrecalculator::solve(
         reference_visibility.size(0) != reference_projected_uv.size(0) ||
         reference_visibility.size(1) != reference_images.size(0) || reference_projected_uv.size(1) != reference_images.size(0) ||
         cameras.size() != static_cast<size_t>(reference_images.size(0)) || cameras.size() < 2 || options_.points_per_camera < 1 ||
-        options_.patch_radius < 0 || options_.neighbors_per_camera < 1)
+        options_.patch_radius < 0 || options_.neighbors_per_camera < 1 || options_.match_batch_size < 1 || options_.random_seed < 0)
         throw ValidationError("NDeF sparse precalculation expects matching [V,H,W] images/masks and surface observations [M,V,(2)]");
     for (const auto& camera : cameras) camera.validate();
     const int views = static_cast<int>(reference_images.size(0));
@@ -152,42 +179,68 @@ NDeFSparsePrecalculationResult NDeFSparsePrecalculator::solve(
     std::vector<int64_t> source_camera, camera_count;
     std::vector<double> source_uv, ref_observations, cur_observations, scores;
     std::vector<bool> observation_valid;
+    std::mt19937_64 generator(static_cast<uint64_t>(options_.random_seed));
     for (int source = 0; source < views; ++source) {
         const auto seeds = sample_roi(refs[source], masks[source], options_.points_per_camera, options_.patch_radius,
-                                      options_.min_texture_std);
+                                      options_.min_texture_std, generator);
         const auto targets = neighbours(source, views, std::min(options_.neighbors_per_camera, views - 1));
-        for (const auto& [x, y] : seeds) {
-            auto temporal = match_ncc(refs[source], masks[source], x, y, curs[source], masks[source], x, y,
-                                      options_.patch_radius, options_.temporal_search_radius, options_.temporal_ncc_threshold);
-            if (!temporal.valid) continue;
-            std::vector<std::pair<double, double>> ref_uv(views), cur_uv(views);
-            std::vector<bool> observed(views, false);
-            ref_uv[source] = {static_cast<double>(x), static_cast<double>(y)};
-            cur_uv[source] = {static_cast<double>(temporal.x), static_cast<double>(temporal.y)};
-            observed[source] = true;
-            double score_sum = temporal.score; int score_count = 1;
-            for (int target : targets) {
-                const auto offset = offsets[source][target];
-                const auto cross = match_ncc(refs[source], masks[source], x, y, refs[target], masks[target],
-                                             static_cast<int>(std::lround(x + offset.first)), static_cast<int>(std::lround(y + offset.second)),
-                                             options_.patch_radius, options_.cross_search_radius, options_.cross_ncc_threshold);
-                if (!cross.valid) continue;
-                const auto target_temporal = match_ncc(refs[target], masks[target], cross.x, cross.y, curs[target], masks[target],
-                                                       cross.x, cross.y, options_.patch_radius, options_.temporal_search_radius,
-                                                       options_.temporal_ncc_threshold);
-                if (!target_temporal.valid) continue;
-                ref_uv[target] = {static_cast<double>(cross.x), static_cast<double>(cross.y)};
-                cur_uv[target] = {static_cast<double>(target_temporal.x), static_cast<double>(target_temporal.y)};
-                observed[target] = true; score_sum += cross.score + target_temporal.score; score_count += 2;
+        if (seeds.empty()) continue;
+        std::vector<float> seed_values; seed_values.reserve(seeds.size() * 2);
+        for (const auto& [x, y] : seeds) seed_values.insert(seed_values.end(), {static_cast<float>(x), static_cast<float>(y)});
+        auto seed_tensor = torch::from_blob(seed_values.data(), {static_cast<int64_t>(seeds.size()), 2},
+            torch::TensorOptions().dtype(torch::kFloat32)).clone().to(refs[source].device());
+        auto temporal = match_ncc_batch(refs[source], curs[source], seed_tensor, seed_tensor,
+            options_.patch_radius, options_.temporal_search_radius, options_.match_batch_size);
+        temporal.valid.logical_and_(temporal.score >= options_.temporal_ncc_threshold);
+        std::vector<std::vector<std::pair<double, double>>> ref_uv(seeds.size(), std::vector<std::pair<double, double>>(views));
+        std::vector<std::vector<std::pair<double, double>>> cur_uv(seeds.size(), std::vector<std::pair<double, double>>(views));
+        std::vector<std::vector<bool>> observed(seeds.size(), std::vector<bool>(views, false));
+        std::vector<double> score_sum(seeds.size(), 0.0); std::vector<int> score_count(seeds.size(), 0);
+        auto temporal_uv_cpu = temporal.uv.cpu(), temporal_score_cpu = temporal.score.cpu(), temporal_valid_cpu = temporal.valid.cpu();
+        for (size_t index = 0; index < seeds.size(); ++index) {
+            const auto [x, y] = seeds[index];
+            if (temporal_valid_cpu.index({static_cast<int64_t>(index)}).item<bool>()) {
+                ref_uv[index][source] = {static_cast<double>(x), static_cast<double>(y)};
+                cur_uv[index][source] = {temporal_uv_cpu.index({static_cast<int64_t>(index), 0}).item<double>(),
+                                         temporal_uv_cpu.index({static_cast<int64_t>(index), 1}).item<double>()};
+                observed[index][source] = true; score_sum[index] = temporal_score_cpu.index({static_cast<int64_t>(index)}).item<double>();
+                score_count[index] = 1;
             }
-            const auto count = static_cast<int>(std::count(observed.begin(), observed.end(), true));
+        }
+        for (int target : targets) {
+            const auto offset = offsets[source][target];
+            auto predicted = seed_tensor + torch::tensor({offset.first, offset.second}, seed_tensor.options());
+            auto cross = match_ncc_batch(refs[source], refs[target], seed_tensor, predicted,
+                options_.patch_radius, options_.cross_search_radius, options_.match_batch_size);
+            cross.valid.logical_and_(cross.score >= options_.cross_ncc_threshold);
+            auto target_temporal = match_ncc_batch(refs[target], curs[target], cross.uv, cross.uv,
+                options_.patch_radius, options_.temporal_search_radius, options_.match_batch_size);
+            auto target_valid = cross.valid & target_temporal.valid &
+                                (target_temporal.score >= options_.temporal_ncc_threshold);
+            auto cross_uv_cpu = cross.uv.cpu(), cross_score_cpu = cross.score.cpu();
+            auto target_uv_cpu = target_temporal.uv.cpu(), target_score_cpu = target_temporal.score.cpu();
+            auto target_valid_cpu = target_valid.cpu();
+            for (size_t index = 0; index < seeds.size(); ++index) if (target_valid_cpu.index({static_cast<int64_t>(index)}).item<bool>()) {
+                ref_uv[index][target] = {cross_uv_cpu.index({static_cast<int64_t>(index), 0}).item<double>(),
+                                         cross_uv_cpu.index({static_cast<int64_t>(index), 1}).item<double>()};
+                cur_uv[index][target] = {target_uv_cpu.index({static_cast<int64_t>(index), 0}).item<double>(),
+                                         target_uv_cpu.index({static_cast<int64_t>(index), 1}).item<double>()};
+                observed[index][target] = true;
+                score_sum[index] += cross_score_cpu.index({static_cast<int64_t>(index)}).item<double>() +
+                                    target_score_cpu.index({static_cast<int64_t>(index)}).item<double>();
+                score_count[index] += 2;
+            }
+        }
+        for (size_t index = 0; index < seeds.size(); ++index) {
+            const auto count = static_cast<int>(std::count(observed[index].begin(), observed[index].end(), true));
             if (count < 2) continue;
+            const auto [x, y] = seeds[index];
             source_camera.push_back(source); source_uv.insert(source_uv.end(), {static_cast<double>(x), static_cast<double>(y)});
-            camera_count.push_back(count); scores.push_back(score_sum / score_count);
+            camera_count.push_back(count); scores.push_back(score_sum[index] / score_count[index]);
             for (int view = 0; view < views; ++view) {
-                ref_observations.insert(ref_observations.end(), {ref_uv[view].first, ref_uv[view].second});
-                cur_observations.insert(cur_observations.end(), {cur_uv[view].first, cur_uv[view].second});
-                observation_valid.push_back(observed[view]);
+                ref_observations.insert(ref_observations.end(), {ref_uv[index][view].first, ref_uv[index][view].second});
+                cur_observations.insert(cur_observations.end(), {cur_uv[index][view].first, cur_uv[index][view].second});
+                observation_valid.push_back(observed[index][view]);
             }
         }
     }
