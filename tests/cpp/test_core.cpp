@@ -12,6 +12,8 @@ void test_geometry();
 void test_solver_interfaces();
 void test_pin_solver();
 void test_pin_stereo_solver();
+void test_ndef_solver();
+void test_ndef_precalculation();
 void test_random();
 
 int main() {
@@ -30,6 +32,8 @@ int main() {
     test_solver_interfaces();
     test_pin_solver();
     test_pin_stereo_solver();
+    test_ndef_solver();
+    test_ndef_precalculation();
     test_random();
 
     std::cout << "NeuroDIC C++ architecture tests passed\n";

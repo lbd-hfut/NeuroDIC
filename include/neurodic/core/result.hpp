@@ -54,9 +54,29 @@ struct PINStereoResult {
 };
 
 struct NDeFResult {
-    FieldResult surface;
+    FieldResult surface;      // coordinates=reference surface; values=current surface
     FieldResult deformation;
+    torch::Tensor reference_uv;       // CPU float32 [N,V,2]
+    torch::Tensor current_uv;         // CPU float32 [N,V,2]
+    torch::Tensor reference_depth;    // CPU float32 [N,V]
+    torch::Tensor current_depth;      // CPU float32 [N,V]
+    torch::Tensor valid;              // CPU bool [N,V], depth/bounds/ROI at both states
+    // The NDeF field is optimized in SfM coordinates; preserve those arrays
+    // alongside the world-scale public FieldResult export.
+    torch::Tensor reference_surface_sfm;
+    torch::Tensor current_surface_sfm;
+    torch::Tensor deformation_sfm;
+    double sfm_to_world_scale{1.0};
     SolverDiagnostics diagnostics;
+};
+struct NDeFSurfaceResult {
+    torch::Tensor sparse_prediction, query_depth, query_uv, query_cameras;
+    // Dense stage exports are sampled ROI centres after topology filtering.
+    torch::Tensor dense_uv, dense_cameras, dense_targets, dense_depth, dense_world, dense_history;
+    // Final network inference on every exported ROI query-grid point.  These
+    // fields are the dense charts consumed by visibility/depth fusion.
+    torch::Tensor dense_field_uv, dense_field_cameras, dense_field_depth, dense_field_world;
+    double depth_mean{0.0}, depth_std{1.0}; SolverDiagnostics diagnostics;
 };
 
 }  // namespace neurodic

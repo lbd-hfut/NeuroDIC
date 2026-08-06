@@ -45,18 +45,24 @@ if(NEURODIC_TORCH_FOUND)
         src/initialization/seed_cleanup.cpp
         src/initialization/sift_grid_seed_initializer.cpp
         src/initialization/traditional_seed_initializer.cpp
+        src/initialization/ndef_precalculation.cpp
         src/model/fourier.cpp
         src/model/mlp.cpp
         src/model/ndef_internal_model.cpp
+        src/model/ndef_depth_model.cpp
         src/model/model_factory.cpp
         src/optimizer/adam.cpp
         src/representation/pin_displacement_field.cpp
+        src/representation/ndef_surface_field.cpp
+        src/representation/ndef_deformation_field.cpp
         src/problem/pin_problem.cpp
         src/problem/pin_stereo_problem.cpp
         src/problem/ndef_problem.cpp
+        src/problem/ndef_surface_problem.cpp
         src/solver/pin_solver.cpp
         src/solver/pin_stereo_solver.cpp
         src/solver/ndef_solver.cpp
+        src/solver/ndef_surface_solver.cpp
     )
     # The static core is linked into the pybind11 shared module (_neurodic),
     # so all objects must be position-independent.
@@ -128,6 +134,8 @@ if(NEURODIC_BUILD_TESTS AND NEURODIC_TORCH_FOUND)
         tests/cpp/test_solver_interfaces.cpp
         tests/cpp/test_pin_solver.cpp
         tests/cpp/test_pin_stereo_solver.cpp
+        tests/cpp/test_ndef_solver.cpp
+        tests/cpp/test_ndef_precalculation.cpp
     )
     target_link_libraries(neurodic_cpp_tests PRIVATE neurodic_core)
     neurodic_apply_warnings(neurodic_cpp_tests)

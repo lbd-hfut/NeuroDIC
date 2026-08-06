@@ -27,5 +27,8 @@ def test_multiview_cylinder_calibration_and_scale_recovery():
     assert result["mean_reprojection_error"] >= 0.0
     assert scale["sfm_to_world_scale"] > 0.0
     assert len(scale["scaled_cameras"]) == 12
+    assert len(scale["scaled_points3d"]) == len(result["points3d"])
+    assert len(scale["sfm_to_world_rotation"]) == 3
+    assert len(scale["sfm_to_world_translation"]) == 3
     assert scale["triangulated_corners"] == 63
     assert scale["valid_edges"] == 110

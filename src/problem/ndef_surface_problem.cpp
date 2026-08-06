@@ -1,0 +1,13 @@
+#include "neurodic/problem/ndef_surface_problem.hpp"
+#include "neurodic/core/exceptions.hpp"
+namespace neurodic {
+NDeFSurfaceProblem::NDeFSurfaceProblem(torch::Tensor uv,torch::Tensor cams,torch::Tensor depth,torch::Tensor sizes,torch::Tensor masks,torch::Tensor queries,torch::Tensor query_cams)
+ : sparse_uv(uv.detach().cpu().to(torch::kFloat32).contiguous()),sparse_cameras(cams.detach().cpu().to(torch::kLong).contiguous()),sparse_depth(depth.detach().cpu().to(torch::kFloat32).contiguous()),image_sizes(sizes.detach().cpu().to(torch::kFloat32).contiguous()),roi_masks(masks.detach().cpu().to(torch::kBool).contiguous()),query_uv(queries.detach().cpu().to(torch::kFloat32).contiguous()),query_cameras(query_cams.detach().cpu().to(torch::kLong).contiguous()) {}
+void NDeFSurfaceProblem::set_dense_inputs(torch::Tensor images, torch::Tensor k, torch::Tensor r, torch::Tensor t,
+                                           torch::Tensor d, torch::Tensor n) {
+    reference_images=images.detach().cpu().to(torch::kFloat32).contiguous(); intrinsics=k.detach().cpu().to(torch::kFloat32).contiguous();
+    rotations=r.detach().cpu().to(torch::kFloat32).contiguous(); translations=t.detach().cpu().to(torch::kFloat32).contiguous();
+    distortions=d.detach().cpu().to(torch::kFloat32).contiguous(); dense_neighbors=n.detach().cpu().to(torch::kLong).contiguous();
+}
+void NDeFSurfaceProblem::validate() const { const auto v=image_sizes.size(0); if(sparse_uv.dim()!=2||sparse_uv.size(1)!=2||sparse_cameras.dim()!=1||sparse_depth.dim()!=1||sparse_uv.size(0)!=sparse_cameras.size(0)||sparse_uv.size(0)!=sparse_depth.size(0)||sparse_uv.size(0)<1||image_sizes.dim()!=2||image_sizes.size(1)!=2||roi_masks.dim()!=3||roi_masks.size(0)!=v||query_uv.dim()!=2||query_uv.size(1)!=2||query_cameras.dim()!=1||query_uv.size(0)!=query_cameras.size(0)||pretrain_iterations<0||pretrain_learning_rate<=0||weight_decay<0||smoothness_weight<0) throw ValidationError("NDeF surface pretraining inputs are invalid"); if(dense_iterations>0 && (!reference_images.defined()||reference_images.sizes()!=roi_masks.sizes()||intrinsics.sizes()!=torch::IntArrayRef({v,3,3})||rotations.sizes()!=intrinsics.sizes()||translations.sizes()!=torch::IntArrayRef({v,3})||distortions.dim()!=2||distortions.size(0)!=v||dense_neighbors.sizes()!=torch::IntArrayRef({v,2})||dense_samples_per_camera<1||dense_spacing_px<1||dense_patch_radius<0||dense_learning_rate<=0||dense_anchor_weight<0||dense_min_valid_patch_ratio<=0||dense_min_valid_patch_ratio>1)) throw ValidationError("NDeF dense surface refinement inputs are invalid"); }
+} // namespace neurodic

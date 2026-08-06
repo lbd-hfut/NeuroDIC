@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -189,8 +190,11 @@ def multiview_result_to_dict(result) -> dict[str, Any]:
 
 def scale_result_to_dict(result) -> dict[str, Any]:
     return {
+        "source_type": "triangulated_chessboard_uniform_scale",
         "sfm_to_world_scale": float(result.sfm_to_world_scale),
         "world_to_sfm_scale": float(result.world_to_sfm_scale),
+        "sfm_to_world_rotation": np.eye(3, dtype=float).tolist(),
+        "sfm_to_world_translation": np.zeros(3, dtype=float).tolist(),
         "sfm_square_size_mean": float(result.sfm_square_size_mean),
         "sfm_square_size_median": float(result.sfm_square_size_median),
         "sfm_square_size_std": float(result.sfm_square_size_std),
@@ -439,6 +443,92 @@ def _meta_camera_models(meta: dict[str, Any]):
     return cameras
 
 
+def _align_sfm_to_metric_cameras(
+    sfm_cameras: list[dict[str, Any]],
+    sfm_points: list[dict[str, Any]],
+    metric_cameras: list[dict[str, Any]],
+    source: str,
+) -> dict[str, Any]:
+    """Align one coherent SfM reconstruction to metric camera centres.
+
+    The metric camera models define the desired world frame, but their idealised
+    extrinsics must not replace the image-consistent SfM extrinsics directly.
+    A Sim(3) fitted from corresponding camera centres is instead applied to both
+    SfM cameras and sparse points, preserving every image reprojection.
+    """
+    metric_by_label = {str(camera["label"]): camera for camera in metric_cameras}
+    matched = [(camera, metric_by_label.get(str(camera["label"]))) for camera in sfm_cameras]
+    matched = [(sfm, metric) for sfm, metric in matched if metric is not None]
+    if len(matched) < 3:
+        raise RuntimeError("At least three labelled camera correspondences are required for metric Sim3 alignment")
+
+    sfm_centres = np.asarray([sfm["camera_center"] for sfm, _ in matched], dtype=np.float64)
+    metric_centres = np.asarray([metric["camera_center"] for _, metric in matched], dtype=np.float64)
+    sfm_mean = sfm_centres.mean(axis=0)
+    metric_mean = metric_centres.mean(axis=0)
+    sfm_zero = sfm_centres - sfm_mean
+    metric_zero = metric_centres - metric_mean
+    covariance = metric_zero.T @ sfm_zero / len(matched)
+    left, singular_values, right_t = np.linalg.svd(covariance)
+    correction = np.eye(3, dtype=np.float64)
+    correction[-1, -1] = np.sign(np.linalg.det(left @ right_t))
+    rotation = left @ correction @ right_t
+    sfm_variance = float(np.mean(np.sum(sfm_zero * sfm_zero, axis=1)))
+    if sfm_variance <= 1e-12:
+        raise RuntimeError("SfM camera centres do not span a usable Sim3 alignment")
+    scale = float(np.sum(singular_values * np.diag(correction)) / sfm_variance)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise RuntimeError("Recovered SfM-to-world Sim3 scale is invalid")
+    translation = metric_mean - scale * (rotation @ sfm_mean)
+
+    transformed_cameras = []
+    orientation_errors = []
+    for camera in sfm_cameras:
+        transformed = dict(camera)
+        sfm_rotation = np.asarray(camera["R"], dtype=np.float64)
+        sfm_translation = np.asarray(camera["t"], dtype=np.float64)
+        world_rotation = sfm_rotation @ rotation.T
+        world_translation = scale * sfm_translation - world_rotation @ translation
+        world_centre = -world_rotation.T @ world_translation
+        intrinsic = np.asarray(camera["K"], dtype=np.float64)
+        transformed.update({
+            "R": world_rotation.tolist(),
+            "t": world_translation.tolist(),
+            "camera_center": world_centre.tolist(),
+            "projection_matrix": (intrinsic @ np.column_stack((world_rotation, world_translation))).tolist(),
+        })
+        transformed_cameras.append(transformed)
+        metric = metric_by_label.get(str(camera["label"]))
+        if metric is not None:
+            delta = world_rotation @ np.asarray(metric["R"], dtype=np.float64).T
+            cosine = np.clip((np.trace(delta) - 1.0) * 0.5, -1.0, 1.0)
+            orientation_errors.append(float(np.degrees(np.arccos(cosine))))
+
+    transformed_points = []
+    for point in sfm_points:
+        transformed = dict(point)
+        xyz = np.asarray(point["xyz"], dtype=np.float64)
+        transformed["xyz"] = (scale * (rotation @ xyz) + translation).tolist()
+        transformed_points.append(transformed)
+
+    fitted_centres = (scale * (rotation @ sfm_centres.T)).T + translation
+    centre_errors = np.linalg.norm(fitted_centres - metric_centres, axis=1)
+    return {
+        "source": source,
+        "source_type": "metric_camera_models_sim3_alignment",
+        "sfm_to_world_scale": scale,
+        "world_to_sfm_scale": 1.0 / scale,
+        "sfm_to_world_rotation": rotation.tolist(),
+        "sfm_to_world_translation": translation.tolist(),
+        "camera_center_alignment_rmse": float(np.sqrt(np.mean(np.square(centre_errors)))),
+        "camera_center_alignment_median": float(np.median(centre_errors)),
+        "camera_orientation_alignment_mean_deg": float(np.mean(orientation_errors)),
+        "camera_orientation_alignment_max_deg": float(np.max(orientation_errors)),
+        "scaled_cameras": transformed_cameras,
+        "scaled_points3d": transformed_points,
+    }
+
+
 def recover_multiview_calibration_scale(
     case_root: str | Path,
     calibration_result,
@@ -487,13 +577,15 @@ def recover_multiview_calibration_scale(
         if not bool(scale_cfg.get("allow_meta_camera_model_fallback", True)):
             raise
     cameras = _meta_camera_models(meta)
-    if len(cameras) < 2:
+    if len(cameras) < 3:
         raise RuntimeError("Metric chessboard metadata did not contain usable camera models")
-    return {
-        "source": str(meta_path),
-        "source_type": "metric_chessboard_meta_camera_models",
-        "sfm_to_world_scale": 1.0,
-        "world_to_sfm_scale": 1.0,
+    aligned = _align_sfm_to_metric_cameras(
+        [camera_to_dict(camera) for camera in calibration_result.cameras],
+        [sparse_point_to_dict(point, index) for index, point in enumerate(calibration_result.sparse_points)],
+        [camera_to_dict(camera) for camera in cameras],
+        str(meta_path),
+    )
+    aligned.update({
         "sfm_square_size_mean": square_size,
         "sfm_square_size_median": square_size,
         "sfm_square_size_std": 0.0,
@@ -502,9 +594,8 @@ def recover_multiview_calibration_scale(
         "valid_edges": rows * (cols - 1) + (rows - 1) * cols,
         "triangulated_board_points_sfm": [],
         "edge_lengths_sfm": [],
-        "scaled_cameras": [camera_to_dict(camera) for camera in cameras],
-        "scaled_points3d": [],
-    }
+    })
+    return aligned
 
 
 def _camera_pair_dict(result: dict[str, Any], board) -> dict[str, Any]:
@@ -563,6 +654,144 @@ def _save_multiview_observations(calibration: dict[str, Any], path: Path) -> Non
              uv=np.asarray(uv, dtype=np.float64).reshape((-1, 2)))
 
 
+def _natural_camera_key(name: str) -> tuple:
+    """Return a stable human-name key used only to orient an inferred order."""
+    return tuple(int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name))
+
+
+def _orient_camera_order(order: list[int], names: list[str], closed: bool) -> list[int]:
+    """Remove the arbitrary PCA sign, and for a cycle also its arbitrary start."""
+    if closed:
+        start = min(range(len(order)), key=lambda position: _natural_camera_key(names[order[position]]))
+        order = order[start:] + order[:start]
+        reverse = [order[0], *reversed(order[1:])]
+        if [_natural_camera_key(names[index]) for index in reverse] < [
+            _natural_camera_key(names[index]) for index in order
+        ]:
+            order = reverse
+        return order
+    reverse = list(reversed(order))
+    return reverse if _natural_camera_key(names[reverse[0]]) < _natural_camera_key(names[order[0]]) else order
+
+
+def infer_multiview_camera_pairs(calibration: dict[str, Any]) -> dict[str, Any]:
+    """Infer an ordered chain or closed camera ring from calibrated centers.
+
+    PCA supplies a geometry-only ordering.  A near-linear centre distribution
+    is a chain.  Otherwise centres are ordered by polar angle in their best-fit
+    plane; a single angular gap much larger than the typical adjacent gap opens
+    the ring into a chain.  Camera labels are used only to choose a deterministic
+    orientation after the geometric order has been found.
+    """
+    cameras = list(calibration.get("cameras", calibration.get("scaled_cameras", [])))
+    if len(cameras) < 2:
+        raise ValueError("Camera-pair inference requires at least two calibrated cameras")
+    names = [str(camera.get("label", f"cam_{index}")) for index, camera in enumerate(cameras)]
+    centers = np.asarray([camera["camera_center"] for camera in cameras], dtype=np.float64)
+    if centers.shape != (len(cameras), 3) or not np.all(np.isfinite(centers)):
+        raise ValueError("Every calibrated camera must have one finite 3-D camera_center")
+    centered = centers - centers.mean(axis=0, keepdims=True)
+    _, singular_values, axes = np.linalg.svd(centered, full_matrices=False)
+    if singular_values[0] <= 1e-12:
+        raise ValueError("Camera centers do not span a usable geometry")
+
+    second_to_first = float(singular_values[1] / singular_values[0]) if len(singular_values) > 1 else 0.0
+    linear_threshold = 0.20
+    angular_gap_ratio_threshold = 2.0
+    angles_by_camera = np.full(len(cameras), np.nan, dtype=np.float64)
+    angular_gaps = np.empty(0, dtype=np.float64)
+    fitted_circle_center = None
+    fitted_circle_radius = None
+    fitted_circle_relative_residual = None
+    if second_to_first < linear_threshold:
+        topology = "chain"
+        projection = centered @ axes[0]
+        order = np.argsort(projection, kind="stable").tolist()
+        inference_method = "pca_linear"
+        largest_gap_ratio = None
+    else:
+        planar = centered @ axes[:2].T
+        design = np.column_stack((2.0 * planar[:, 0], 2.0 * planar[:, 1], np.ones(len(planar))))
+        circle_solution, _, _, _ = np.linalg.lstsq(design, np.square(planar).sum(axis=1), rcond=None)
+        circle_center = circle_solution[:2]
+        circle_radius = float(np.sqrt(max(0.0, circle_solution[2] + np.square(circle_center).sum())))
+        radial_distances = np.linalg.norm(planar - circle_center, axis=1)
+        circle_residual = float(np.sqrt(np.mean(np.square(radial_distances - circle_radius))))
+        fitted_circle_center = circle_center.tolist()
+        fitted_circle_radius = circle_radius
+        fitted_circle_relative_residual = circle_residual / max(circle_radius, 1e-12)
+        angles_by_camera = np.mod(
+            np.arctan2(planar[:, 1] - circle_center[1], planar[:, 0] - circle_center[0]), 2.0 * np.pi
+        )
+        cyclic_order = np.argsort(angles_by_camera, kind="stable").tolist()
+        sorted_angles = angles_by_camera[cyclic_order]
+        angular_gaps = np.diff(np.r_[sorted_angles, sorted_angles[0] + 2.0 * np.pi])
+        positive_gaps = angular_gaps[angular_gaps > 1e-9]
+        typical_gap = float(np.median(positive_gaps)) if len(positive_gaps) else 0.0
+        largest_position = int(np.argmax(angular_gaps))
+        largest_gap_ratio = float(angular_gaps[largest_position] / typical_gap) if typical_gap > 0.0 else float("inf")
+        closed = largest_gap_ratio <= angular_gap_ratio_threshold
+        topology = "closed" if closed else "chain"
+        if closed:
+            order = cyclic_order
+        else:
+            start = (largest_position + 1) % len(cyclic_order)
+            order = cyclic_order[start:] + cyclic_order[:start]
+        inference_method = "pca_planar_polar_angle"
+
+    order = _orient_camera_order(order, names, topology == "closed")
+    neighbors: dict[str, list[str]] = {}
+    pair_indices: set[tuple[int, int]] = set()
+    for position, camera_index in enumerate(order):
+        adjacent_positions = []
+        if position > 0:
+            adjacent_positions.append(position - 1)
+        elif topology == "closed":
+            adjacent_positions.append(len(order) - 1)
+        if position + 1 < len(order):
+            adjacent_positions.append(position + 1)
+        elif topology == "closed":
+            adjacent_positions.append(0)
+        adjacent = [order[item] for item in adjacent_positions]
+        neighbors[names[camera_index]] = [names[index] for index in adjacent]
+        for other in adjacent:
+            pair_indices.add(tuple(sorted((camera_index, other))))
+
+    counts = np.asarray(calibration.get("inlier_match_counts", []), dtype=np.float64)
+    pair_records = []
+    for first, second in sorted(pair_indices):
+        record: dict[str, Any] = {"cameras": [names[first], names[second]], "indices": [first, second]}
+        if counts.shape == (len(cameras), len(cameras)):
+            record["inlier_match_count"] = int(counts[first, second])
+        pair_records.append(record)
+    adjacent_counts = [record["inlier_match_count"] for record in pair_records if "inlier_match_count" in record]
+
+    return {
+        "schema_version": 1,
+        "topology": topology,
+        "inference_method": inference_method,
+        "camera_names": names,
+        "ordered_camera_indices": order,
+        "ordered_camera_names": [names[index] for index in order],
+        "neighbors": neighbors,
+        "pairs": pair_records,
+        "diagnostics": {
+            "pca_singular_values": singular_values.tolist(),
+            "pca_second_to_first_ratio": second_to_first,
+            "linear_ratio_threshold": linear_threshold,
+            "fitted_circle_center_in_pca_plane": fitted_circle_center,
+            "fitted_circle_radius": fitted_circle_radius,
+            "fitted_circle_relative_residual": fitted_circle_relative_residual,
+            "angles_radians_by_camera": angles_by_camera.tolist(),
+            "cyclic_angular_gaps_radians": angular_gaps.tolist(),
+            "largest_angular_gap_ratio": largest_gap_ratio,
+            "closed_gap_ratio_threshold": angular_gap_ratio_threshold,
+            "adjacent_inlier_match_counts": adjacent_counts,
+            "minimum_adjacent_inlier_match_count": min(adjacent_counts) if adjacent_counts else None,
+        },
+    }
+
+
 def run_multiview_case(case_root: str | Path, config: Optional[str | Path | dict[str, Any]] = None) -> dict[str, Any]:
     """Run, scale, export, and visualize the Traditional-DIC multiview workflow."""
     from .visualization import visualization_dir_for_result, visualize_multiview_calibration
@@ -581,6 +810,8 @@ def run_multiview_case(case_root: str | Path, config: Optional[str | Path | dict
     result_dir = root / "result" / "calibration"
     save_json(calibration, result_dir / "calibration_result.json")
     _save_multiview_observations(calibration, result_dir / "observations.npz")
+    camera_pairs = infer_multiview_camera_pairs(calibration)
+    save_json(camera_pairs, result_dir / "camera_pairs.json")
     summary = {
         "image_paths": [str(path) for path in image_paths],
         "camera_count": len(calibration["cameras"]),
@@ -591,11 +822,14 @@ def run_multiview_case(case_root: str | Path, config: Optional[str | Path | dict
     scale = recover_multiview_calibration_scale(root, raw, config=cfg)
     save_json(scale, result_dir / "calibration_scale.json")
     scaled = dict(calibration)
-    scaled.update({key: value for key, value in scale.items() if key != "scaled_points3d"})
+    scaled.update(scale)
+    scaled["cameras"] = scale["scaled_cameras"]
+    scaled["points3d"] = scale["scaled_points3d"]
     save_json(scaled, result_dir / "calibration_result_scaled.json")
     visualization_dir = visualization_dir_for_result(root, result_dir)
     outputs = visualize_multiview_calibration(calibration, image_paths, visualization_dir)
-    return {"result": calibration, "scale": scale, "result_dir": str(result_dir), "visualization": outputs}
+    return {"result": calibration, "scale": scale, "camera_pairs": camera_pairs,
+            "result_dir": str(result_dir), "visualization": outputs}
 
 
 def __getattr__(name):

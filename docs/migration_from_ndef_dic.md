@@ -1,6 +1,7 @@
 # Migration: NDeF-DIC into NeuroDIC
 
-Status: Design draft.
+Status: deformation-stage core migrated; dense reference-surface preprocessing
+and sparse displacement-scale preprocessing remain separate follow-up stages.
 
 This document describes how the multi-view neural deformation DIC
 implementation in `/home/a306/01project/NDeF-DIC` is migrated into the
@@ -62,9 +63,9 @@ stage-to-module mapping:
 - Migrate `estimate_multiview_chessboard_scale` semantics (triangulate board
   corners in SfM units, compare edge lengths against known square size,
   robust trim) into `calibration/`.
-- `NDeFProblem` stores the `sfm2world_scale`; the solver converts SfM-scale
-  surface points to world scale on input and exports world-scale displacement
-  on output (NDeF-DIC keeps both scales; retain the same dual export).
+- `NDeFProblem` stores the `sfm2world_scale`; the solver trains on SfM-scale
+  geometry and exports both SfM-scale and world-scale arrays. The Python thin
+  layer reads the migrated chessboard `calibration_scale.json` product.
 
 ### 3.3 `dense` -> reference surface preprocessing
 
@@ -117,10 +118,10 @@ Differentiable kernels translated from NDeF-DIC (PyTorch -> LibTorch):
 | NDeF-DIC source | NeuroDIC target | Notes |
 |---|---|---|
 | `deformation_field.py` (`NeuralDisplacementField`, `PositionalEncoding`) | `model/ndef_internal_model.hpp` (torch `nn::Module`) | tanh MLP 3->HxL->3, optional PE, coord center/scale buffers, output_scale |
-| `deformation_loss.py` (`deformation_photometric_mse`, `project_world_torch`, `distort_normalized_torch`, `bilinear_sample_single`, `znssd_patch_loss`) | `loss/` + `geometry/ndef_geometry.cpp` | project points, sample patches per camera, MSE/ZNSSD, `1/visible_counts` weighting, invalid-patch penalty |
+| `deformation_loss.py` (`deformation_photometric_mse`, `project_world_torch`, `distort_normalized_torch`, `bilinear_sample_single`, `znssd_patch_loss`) | `solver/ndef_solver.cpp` + `geometry/ndef_geometry.cpp` | migrated: project points, sample patches per camera, MSE/ZNSSD, `1/visible_counts` weighting, invalid-patch penalty |
 | `deformation_dataset.py` (`SurfaceDeformationDataset`) | `data/multiview_dataset.hpp` + `problem/ndef_problem.cpp` | hold surface tensors + camera tensors + image stacks |
-| `smoothness_loss` | `loss/regularization.hpp` | Jacobian-norm penalty on normalized coords |
-| `train_deformation.py` | `solver/ndef_solver.cpp` | AdamW loop, per-batch sampling, best-loss checkpoint, world-scale export |
+| `smoothness_loss` | `solver/ndef_solver.cpp` | migrated: Jacobian-norm penalty on normalized coords |
+| `train_deformation.py` | `solver/ndef_solver.cpp` | migrated: AdamW loop and best-loss parameter restoration; persistent checkpoints/world-scale dual export remain follow-up |
 
 Key semantics to preserve:
 
@@ -140,7 +141,7 @@ Key semantics to preserve:
 |---|---|
 | D8 | SfM stage uses the Traditional-DIC C++ self-calibration (`colmap_calibration.hpp`); pycolmap is an optional Python-side fallback. |
 | D9 | `NDeFSolver` owns only the deformation stage; surface dataset + scale are input contracts. |
-| D10 | Both SfM-scale and world-scale arrays are exported (NDeF-DIC dual-scale convention). |
+| D10 | Done. Both SfM-scale and world-scale arrays are exported (NDeF-DIC dual-scale convention). |
 
 ### 4.2 Open Decision
 

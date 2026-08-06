@@ -1,10 +1,13 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <torch/extension.h>
 
 #include <string>
 
 #include "neurodic/problem/pin_problem.hpp"
 #include "neurodic/problem/pin_stereo_problem.hpp"
+#include "neurodic/problem/ndef_problem.hpp"
+#include "neurodic/problem/ndef_surface_problem.hpp"
 
 namespace py = pybind11;
 
@@ -54,4 +57,34 @@ void bind_problem(py::module_& module) {
         }, py::arg("max_reprojection_error"), py::arg("require_positive_depth") = true,
            py::arg("undistort_iterations") = 12)
         .def("validate", &neurodic::PINStereoProblem::validate);
+
+    py::class_<neurodic::NDeFProblem>(module, "NDeFProblem")
+        .def(py::init<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+                      std::vector<neurodic::CameraModel>>(),
+             py::arg("reference_surface"), py::arg("reference_images"), py::arg("deformed_images"),
+             py::arg("reference_masks"), py::arg("deformed_masks"), py::arg("cameras"))
+        .def_readwrite("model_options", &neurodic::NDeFProblem::model_options)
+        .def_readwrite("photometric_iterations", &neurodic::NDeFProblem::photometric_iterations)
+        .def_readwrite("photometric_sample_count", &neurodic::NDeFProblem::photometric_sample_count)
+        .def_readwrite("bspline_degree", &neurodic::NDeFProblem::bspline_degree)
+        .def_readwrite("photometric_learning_rate", &neurodic::NDeFProblem::photometric_learning_rate)
+        .def_readwrite("weight_decay", &neurodic::NDeFProblem::weight_decay)
+        .def_readwrite("smoothness_weight", &neurodic::NDeFProblem::smoothness_weight)
+        .def_readwrite("patch_radius", &neurodic::NDeFProblem::patch_radius)
+        .def_readwrite("min_valid_patch_ratio", &neurodic::NDeFProblem::min_valid_patch_ratio)
+        .def_readwrite("invalid_patch_penalty", &neurodic::NDeFProblem::invalid_patch_penalty)
+        .def_readwrite("sfm_to_world_scale", &neurodic::NDeFProblem::sfm_to_world_scale)
+        .def_readwrite("photometric_loss", &neurodic::NDeFProblem::photometric_loss)
+        .def("set_device", [](neurodic::NDeFProblem& problem, const std::string& device) {
+            problem.device = torch::Device(device);
+        })
+        .def("set_surface_observations", [](neurodic::NDeFProblem& problem, torch::Tensor visibility,
+                                               torch::Tensor projected_uv, torch::Tensor visible_counts) {
+            problem.reference_visibility = visibility.detach().to(torch::kCPU).to(torch::kBool).contiguous();
+            problem.reference_projected_uv = projected_uv.detach().to(torch::kCPU).to(torch::kFloat32).contiguous();
+            problem.visible_counts = visible_counts.detach().to(torch::kCPU).to(torch::kFloat32).contiguous();
+        }, py::arg("visibility"), py::arg("projected_uv"), py::arg("visible_counts"))
+        .def("validate", &neurodic::NDeFProblem::validate);
+    py::class_<neurodic::NDeFDepthModelOptions>(module,"NDeFDepthModelOptions").def(py::init<>()).def_readwrite("hidden_dim",&neurodic::NDeFDepthModelOptions::hidden_dim).def_readwrite("pixel_layers",&neurodic::NDeFDepthModelOptions::pixel_layers).def_readwrite("camera_layers",&neurodic::NDeFDepthModelOptions::camera_layers).def_readwrite("trunk_layers",&neurodic::NDeFDepthModelOptions::trunk_layers).def_readwrite("camera_embedding_dim",&neurodic::NDeFDepthModelOptions::camera_embedding_dim).def_readwrite("positional_encoding_enabled",&neurodic::NDeFDepthModelOptions::positional_encoding_enabled).def_readwrite("positional_encoding_num_frequencies",&neurodic::NDeFDepthModelOptions::positional_encoding_num_frequencies);
+    py::class_<neurodic::NDeFSurfaceProblem>(module,"NDeFSurfaceProblem").def(py::init<torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor>()).def_readwrite("model_options",&neurodic::NDeFSurfaceProblem::model_options).def_readwrite("pretrain_iterations",&neurodic::NDeFSurfaceProblem::pretrain_iterations).def_readwrite("pretrain_learning_rate",&neurodic::NDeFSurfaceProblem::pretrain_learning_rate).def_readwrite("weight_decay",&neurodic::NDeFSurfaceProblem::weight_decay).def_readwrite("smoothness_weight",&neurodic::NDeFSurfaceProblem::smoothness_weight).def_readwrite("smooth_samples_per_camera",&neurodic::NDeFSurfaceProblem::smooth_samples_per_camera).def_readwrite("dense_iterations",&neurodic::NDeFSurfaceProblem::dense_iterations).def_readwrite("dense_samples_per_camera",&neurodic::NDeFSurfaceProblem::dense_samples_per_camera).def_readwrite("dense_spacing_px",&neurodic::NDeFSurfaceProblem::dense_spacing_px).def_readwrite("dense_patch_radius",&neurodic::NDeFSurfaceProblem::dense_patch_radius).def_readwrite("dense_learning_rate",&neurodic::NDeFSurfaceProblem::dense_learning_rate).def_readwrite("dense_anchor_weight",&neurodic::NDeFSurfaceProblem::dense_anchor_weight).def_readwrite("dense_min_valid_patch_ratio",&neurodic::NDeFSurfaceProblem::dense_min_valid_patch_ratio).def_readwrite("dense_seed",&neurodic::NDeFSurfaceProblem::dense_seed).def("set_dense_inputs",&neurodic::NDeFSurfaceProblem::set_dense_inputs).def("set_device",[](neurodic::NDeFSurfaceProblem& p,const std::string& v){p.device=torch::Device(v);});
 }
