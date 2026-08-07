@@ -1,0 +1,48 @@
+# Reserved configuration for the independent pairwise multi-camera PIN route.
+# Not consumed by existing PIN stereo or NDeF entry points.
+solver: pin_multi_slover
+mode: pairwise_multiview
+runtime:
+  random_seed: 20260807
+  deterministic: true
+case:
+  root: case/Multi/CylinderDIC
+  images: images
+  calibration: result/calibration/calibration_result_scaled.json
+  reference_frame: 001.bmp
+  frame: -1
+camera_pairs:
+  selection: auto_spatial_neighbors
+  wrap: true
+  manual: []
+pair_roi:
+  generator: reference_pair_sift
+  output: result/pin_multi_slover/pair_roi
+  feature_method: sift
+  max_features: 12000
+  match_ratio: 0.75
+  mutual_check: true
+  ransac_reprojection_threshold_px: 3.0
+  min_matches: 20
+  support: convex_hull
+  alpha_radius_scale: 8.0
+  erode_pixels: 0
+pairwise_pin:
+  # For each A-B pair: A0->B0, A0->Ak, A0->Bk.
+  interpolation: {type: bspline, degree: 5}
+  model: {type: mlp, hidden_dim: 32, hidden_layers: 3}
+  training: {device: cuda, photometric_loss: znssd}
+reconstruction:
+  min_views: 2
+  max_reprojection_error_px: 5.0
+  require_positive_depth: true
+  world_scale: 1.0
+fusion:
+  enabled: false  # Placeholder: pairwise surfaces must be available first.
+  remove_rigid_body_motion: false
+output:
+  result: result/pin_multi_slover
+  visualization: visualization/pin_multi_slover
+notes:
+  - This route owns pair-local SIFT ROI masks created from reference-time images.
+  - Do not use case.result/mask/per_camera; that location belongs to NDeF ROI generation.
