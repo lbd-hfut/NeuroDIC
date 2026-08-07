@@ -185,6 +185,52 @@ def multiview_result_to_dict(result) -> dict[str, Any]:
         "points3d": [sparse_point_to_dict(point, i) for i, point in enumerate(result.sparse_points)],
         "inlier_match_counts": [[int(v) for v in row] for row in result.inlier_match_counts],
         "mean_reprojection_error": float(result.mean_reprojection_error),
+        "stage_stats": [
+            {
+                "stage": stat.stage,
+                "num_registered_cameras": int(stat.num_registered_cameras),
+                "num_points3d": int(stat.num_points3d),
+                "num_observations": int(stat.num_observations),
+                "mean_reprojection_error": float(stat.mean_reprojection_error),
+                "focal_length": float(stat.focal_length),
+                "principal_point_x": float(stat.principal_point_x),
+                "principal_point_y": float(stat.principal_point_y),
+                "distortion_k1": float(stat.distortion_k1),
+            }
+            for stat in result.stage_stats
+        ],
+        "registration_attempts": [
+            {
+                "image_index": int(attempt.image_index),
+                "success": bool(attempt.success),
+                "reason": str(attempt.reason),
+                "num_visible_points": int(attempt.num_visible_points),
+                "num_pnp_correspondences": int(attempt.num_pnp_correspondences),
+                "num_pnp_inliers": int(attempt.num_pnp_inliers),
+            }
+            for attempt in result.registration_attempts
+        ],
+        "pipeline_log": [str(line) for line in result.pipeline_log],
+        "point_diagnostics": [
+            {
+                "point_id": int(diag.point_id),
+                "track_length": int(diag.track_length),
+                "valid": int(diag.point_id) >= 0,
+                "images": [int(image) for image in diag.images],
+                "per_observation_errors": [float(error) for error in diag.per_observation_errors],
+                "max_triangulation_angle_degrees": float(diag.max_triangulation_angle_degrees),
+                "median_triangulation_angle_degrees": float(diag.median_triangulation_angle_degrees),
+                "all_positive_depth": bool(diag.all_positive_depth),
+                "creation_source": str(diag.creation_source),
+                "max_depth_ratio": float(diag.max_depth_ratio),
+                "xyz_before_final_ba": [float(v) for v in diag.xyz_before_final_ba],
+                "rms_before_final_ba": float(diag.rms_before_final_ba),
+                "xyz_after_final_ba": [float(v) for v in diag.xyz_after_final_ba],
+                "rms_after_final_ba": float(diag.rms_after_final_ba),
+                "kept_by_final_filter": bool(diag.kept_by_final_filter),
+            }
+            for diag in result.point_diagnostics
+        ],
     }
 
 
@@ -277,6 +323,13 @@ def make_self_calibration_options(config: Optional[str | Path | dict[str, Any]] 
     options = backend.MultiviewCalibrationOptions()
     options.max_features = int(cfg.get("max_features", options.max_features))
     options.match_ratio = float(cfg.get("match_ratio", options.match_ratio))
+    options.sift_contrast_threshold = float(
+        cfg.get("sift_contrast_threshold", options.sift_contrast_threshold)
+    )
+    options.root_sift = bool(cfg.get("root_sift", options.root_sift))
+    options.bidirectional_matching = bool(
+        cfg.get("bidirectional_matching", options.bidirectional_matching)
+    )
     options.ransac_reprojection_threshold = float(
         cfg.get("ransac_reprojection_threshold", options.ransac_reprojection_threshold)
     )
@@ -284,6 +337,7 @@ def make_self_calibration_options(config: Optional[str | Path | dict[str, Any]] 
         cfg.get("min_triangulation_angle_degrees", options.min_triangulation_angle_degrees)
     )
     options.min_inlier_matches = int(cfg.get("min_inlier_matches", options.min_inlier_matches))
+    options.matching_mode = str(cfg.get("matching_mode", options.matching_mode))
     options.matching_window = int(cfg.get("matching_window", options.matching_window))
     options.wrap_matching = bool(cfg.get("wrap_matching", options.wrap_matching))
     options.initial_image1 = int(cfg.get("initial_image1", options.initial_image1))
@@ -302,6 +356,42 @@ def make_self_calibration_options(config: Optional[str | Path | dict[str, Any]] 
     options.refine_principal_point = bool(cfg.get("refine_principal_point", options.refine_principal_point))
     options.refine_extra_params = bool(cfg.get("refine_extra_params", options.refine_extra_params))
     options.share_intrinsics = bool(cfg.get("share_intrinsics", options.share_intrinsics))
+    options.init_max_forward_motion = float(cfg.get("init_max_forward_motion", options.init_max_forward_motion))
+    options.init_min_tri_angle_degrees = float(
+        cfg.get("init_min_tri_angle_degrees", options.init_min_tri_angle_degrees)
+    )
+    options.max_reg_trials = int(cfg.get("max_reg_trials", options.max_reg_trials))
+    options.init_num_trials = int(cfg.get("init_num_trials", options.init_num_trials))
+    options.structure_less_registration_fallback = bool(
+        cfg.get("structure_less_registration_fallback", options.structure_less_registration_fallback)
+    )
+    options.create_max_angle_error_degrees = float(
+        cfg.get("create_max_angle_error_degrees", options.create_max_angle_error_degrees)
+    )
+    options.continue_max_angle_error_degrees = float(
+        cfg.get("continue_max_angle_error_degrees", options.continue_max_angle_error_degrees)
+    )
+    options.re_max_angle_error_degrees = float(
+        cfg.get("re_max_angle_error_degrees", options.re_max_angle_error_degrees)
+    )
+    options.re_min_ratio = float(cfg.get("re_min_ratio", options.re_min_ratio))
+    options.re_max_trials = int(cfg.get("re_max_trials", options.re_max_trials))
+    options.ba_local_max_refinements = int(cfg.get("ba_local_max_refinements", options.ba_local_max_refinements))
+    options.ba_local_max_refinement_change = float(
+        cfg.get("ba_local_max_refinement_change", options.ba_local_max_refinement_change)
+    )
+    options.ba_global_max_refinements = int(cfg.get("ba_global_max_refinements", options.ba_global_max_refinements))
+    options.ba_global_max_refinement_change = float(
+        cfg.get("ba_global_max_refinement_change", options.ba_global_max_refinement_change)
+    )
+    options.normalize_reconstruction = bool(
+        cfg.get("normalize_reconstruction", options.normalize_reconstruction)
+    )
+    options.final_refine_focal_length = bool(
+        cfg.get("final_refine_focal_length", options.final_refine_focal_length)
+    )
+    options.final_min_track_length = int(cfg.get("final_min_track_length", options.final_min_track_length))
+    options.final_max_depth_ratio = float(cfg.get("final_max_depth_ratio", options.final_max_depth_ratio))
     return options
 
 
@@ -456,8 +546,23 @@ def _align_sfm_to_metric_cameras(
     A Sim(3) fitted from corresponding camera centres is instead applied to both
     SfM cameras and sparse points, preserving every image reprojection.
     """
-    metric_by_label = {str(camera["label"]): camera for camera in metric_cameras}
-    matched = [(camera, metric_by_label.get(str(camera["label"]))) for camera in sfm_cameras]
+    def _camera_label_key(label: Any) -> str:
+        """Normalise a camera label for Sim(3) correspondence matching.
+
+        SfM camera labels carry the reference image path (e.g.
+        ``case/.../images/cam_0/001.bmp``) while the chessboard metadata uses
+        the directory name (``cam_0``).  Extract the parent directory name for
+        path-like labels so both sides always match on ``cam_<index>``.
+        """
+        text = str(label)
+        path = Path(text)
+        if path.name and path.parent.name and path.suffix:
+            # A file path: match on its containing camera directory.
+            return path.parent.name
+        return path.name or text
+
+    metric_by_label = {_camera_label_key(camera["label"]): camera for camera in metric_cameras}
+    matched = [(camera, metric_by_label.get(_camera_label_key(camera["label"]))) for camera in sfm_cameras]
     matched = [(sfm, metric) for sfm, metric in matched if metric is not None]
     if len(matched) < 3:
         raise RuntimeError("At least three labelled camera correspondences are required for metric Sim3 alignment")
@@ -498,7 +603,7 @@ def _align_sfm_to_metric_cameras(
             "projection_matrix": (intrinsic @ np.column_stack((world_rotation, world_translation))).tolist(),
         })
         transformed_cameras.append(transformed)
-        metric = metric_by_label.get(str(camera["label"]))
+        metric = metric_by_label.get(_camera_label_key(camera["label"]))
         if metric is not None:
             delta = world_rotation @ np.asarray(metric["R"], dtype=np.float64).T
             cosine = np.clip((np.trace(delta) - 1.0) * 0.5, -1.0, 1.0)
@@ -807,7 +912,8 @@ def run_multiview_case(case_root: str | Path, config: Optional[str | Path | dict
     calibration = multiview_result_to_dict(raw)
     for index, path in enumerate(image_paths):
         calibration["cameras"][index]["label"] = path.parent.name
-    result_dir = root / "result" / "calibration"
+    result_subdir = str(cfg.get("outputs", {}).get("result_subdir", "calibration"))
+    result_dir = root / "result" / result_subdir
     save_json(calibration, result_dir / "calibration_result.json")
     _save_multiview_observations(calibration, result_dir / "observations.npz")
     camera_pairs = infer_multiview_camera_pairs(calibration)

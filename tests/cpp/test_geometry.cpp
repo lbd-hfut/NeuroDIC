@@ -3,6 +3,9 @@
 
 #include "neurodic/calibration/calibration_result.hpp"
 #include "neurodic/calibration/camera_model.hpp"
+#ifdef NEURODIC_HAS_OPENCV_CALIBRATION
+#include "neurodic/calibration/multiview_calibration.hpp"
+#endif
 #include "neurodic/geometry/ndef_geometry.hpp"
 #include "neurodic/geometry/projection.hpp"
 #include "neurodic/geometry/stereo_geometry.hpp"
@@ -47,4 +50,20 @@ void test_geometry() {
     projected.uv.sum().backward();
     assert(differentiable_point.grad().defined());
     assert(ndef.visibility(point).all().item<bool>());
+
+#ifdef NEURODIC_HAS_OPENCV_CALIBRATION
+    neurodic::calibration::CameraModel sfm_camera;
+    sfm_camera.K = Eigen::Matrix3d::Identity();
+    sfm_camera.R = Eigen::Matrix3d::Identity();
+    sfm_camera.t = Eigen::Vector3d::Zero();
+    sfm_camera.image_width = 640;
+    sfm_camera.image_height = 480;
+    neurodic::calibration::MultiviewCalibrationResult sfm_result;
+    sfm_result.cameras = {sfm_camera};
+    auto converted_result = neurodic::calibration::to_core_calibration_result(sfm_result);
+    assert(converted_result.type == neurodic::CalibrationType::COLMAP);
+    assert(converted_result.cameras.size() == 1);
+    assert(torch::allclose(converted_result.cameras.front().intrinsics,
+                           torch::eye(3, torch::kFloat64)));
+#endif
 }

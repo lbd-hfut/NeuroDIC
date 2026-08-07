@@ -1,18 +1,17 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(NeuroDIC VERSION 0.1.0 LANGUAGES CXX)
+project(NeuroDIC VERSION 0.1.0 LANGUAGES CXX C)
 
 include(cmake/NeuroDICOptions.cmake)
 include(cmake/NeuroDICCompilerWarnings.cmake)
 include(cmake/NeuroDICDependencies.cmake)
 
-set(NEURODIC_TRADITIONAL_CALIBRATION_SOURCES)
-if(NEURODIC_BUILD_TRADITIONAL_CALIBRATION)
-    list(APPEND NEURODIC_TRADITIONAL_CALIBRATION_SOURCES
-        src/calibration/traditional/camera_model.cpp
-        src/calibration/traditional/mono_calibration.cpp
-        src/calibration/traditional/stereo_calibration.cpp
-        src/calibration/traditional/multiview_calibration.cpp
+set(NEURODIC_OPENCV_CALIBRATION_SOURCES)
+if(NEURODIC_BUILD_OPENCV_CALIBRATION)
+    list(APPEND NEURODIC_OPENCV_CALIBRATION_SOURCES
+        src/calibration/mono_calibration.cpp
+        src/calibration/stereo_calibration.cpp
+        src/calibration/multiview_calibration.cpp
     )
 endif()
 
@@ -27,9 +26,7 @@ if(NEURODIC_TORCH_FOUND)
         src/data/multiview_dataset.cpp
         src/calibration/camera_model.cpp
         src/calibration/calibration_result.cpp
-        src/calibration/mono_calibration.cpp
-        src/calibration/stereo_calibration.cpp
-        ${NEURODIC_TRADITIONAL_CALIBRATION_SOURCES}
+        ${NEURODIC_OPENCV_CALIBRATION_SOURCES}
         src/geometry/projection.cpp
         src/geometry/triangulation.cpp
         src/geometry/stereo_geometry.cpp
@@ -81,8 +78,13 @@ if(NEURODIC_TORCH_FOUND)
     neurodic_apply_warnings(neurodic_core)
     target_link_libraries(neurodic_core PUBLIC ${TORCH_LIBRARIES})
     target_compile_definitions(neurodic_core PUBLIC NEURODIC_HAS_TORCH=1)
-    if(NEURODIC_BUILD_TRADITIONAL_CALIBRATION)
+    if(NEURODIC_BUILD_OPENCV_CALIBRATION)
         target_link_libraries(neurodic_core PUBLIC Eigen3::Eigen)
+        target_compile_definitions(neurodic_core PUBLIC NEURODIC_HAS_OPENCV_CALIBRATION=1)
+    endif()
+    if(NEURODIC_CERES_FOUND)
+        target_link_libraries(neurodic_core PUBLIC Ceres::ceres)
+        target_compile_definitions(neurodic_core PUBLIC NEURODIC_HAS_CERES=1)
     endif()
     if(OpenCV_FOUND)
         target_link_libraries(neurodic_core PUBLIC ${OpenCV_LIBS})
@@ -105,7 +107,7 @@ if(NEURODIC_BUILD_PYTHON AND NEURODIC_PYBIND11_FOUND)
         bindings/python/bind_interpolation.cpp
         bindings/python/bind_initialization.cpp
         bindings/python/bind_calibration.cpp
-        bindings/python/bind_traditional_calibration.cpp
+        bindings/python/bind_opencv_calibration.cpp
         bindings/python/bind_problem.cpp
         bindings/python/bind_geometry.cpp
         bindings/python/bind_solver.cpp

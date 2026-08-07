@@ -19,3 +19,17 @@ struct CalibrationResult {
 };
 
 }  // namespace neurodic
+
+#ifdef NEURODIC_HAS_OPENCV_CALIBRATION
+namespace neurodic::calibration {
+
+struct CameraModel;
+struct MultiviewCalibrationResult;
+
+// Explicit conversion boundary from Eigen/OpenCV SfM to Torch core geometry.
+::neurodic::CameraModel to_core_camera_model(const CameraModel& camera);
+::neurodic::CalibrationResult to_core_calibration_result(
+    const MultiviewCalibrationResult& reconstruction);
+
+}  // namespace neurodic::calibration
+#endif

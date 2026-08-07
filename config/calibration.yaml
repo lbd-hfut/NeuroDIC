@@ -40,30 +40,88 @@ stereo_calibration:
 
 self_calibration:
   method: colmap_like
-  # Values mirror COLMAP's CPU SIFT + IncrementalMapper defaults.
-  max_features: 8192
+  # Values mirror COLMAP's CPU SIFT + IncrementalMapper defaults
+  # (COLMAP SIFT max_num_features = 16384; the OpenCV SIFT detector yields
+  # ~11k features on this case, so 16384 never truncates).
+  max_features: 16384
+  # OpenCV SIFT contrast threshold: 0.02 (vs OpenCV default 0.04) was chosen by
+  # the controlled feature/matching experiment matrix: ~+40% verified inliers and
+  # +86% final 3-view+ sparse points with comparable RMS and radial quality
+  # (std 0.081 vs 0.092), no 2-view noise re-introduced.
+  sift_contrast_threshold: 0.02
+  # RootSIFT descriptor normalization (L1 then sqrt), closer to COLMAP descriptors.
+  root_sift: false
+  # Mutually-consistent (bidirectional) ratio-test matching.
+  bidirectional_matching: false
+  # Initial image pair is selected automatically by the candidate loop with
+  # the COLMAP-style survival check (first incremental registration must keep
+  # >= abs_pose_min_num_inliers points), so no fixed seed is needed.
   match_ratio: 0.8
   ransac_reprojection_threshold: 4.0
   min_triangulation_angle_degrees: 1.5
   min_inlier_matches: 100
+  # "window" keeps the legacy ring/sequential matching graph; "exhaustive"
+  # matches every image pair like COLMAP match_exhaustive and filters the
+  # graph only by geometric verification + min_inlier_matches.
+  matching_mode: exhaustive
+  matching_window: 2
+  wrap_matching: true
   # This case supplies a focal prior equivalent to f=2304 px.
   initial_focal_length_factor: 1.6
-  initial_image1: -1
-  initial_image2: -1
   abs_pose_max_error: 12.0
   abs_pose_min_num_inliers: 30
   abs_pose_min_inlier_ratio: 0.25
   filter_max_reproj_error: 4.0
   ba_local_num_images: 6
-  # Compatibility override: full COLMAP global retriangulation is pending.
-  ignore_two_view_tracks: false
+  # COLMAP IncrementalTriangulator defaults; safe now that the exhaustive
+  # matching graph provides multi-view connectivity.
+  ignore_two_view_tracks: true
   refine_bundle: true
-  # Fixed until the SIMPLE_RADIAL prior is fully equivalent to COLMAP's
-  # camera model and intrinsic parameter blocks.
-  share_intrinsics: false
+  # Staged SIMPLE_PINHOLE semantics (CylinderDIC): all images share one camera
+  # whose intrinsics stay FIXED while registering/triangulating, then a final
+  # global BA releases only the focal length.
+  share_intrinsics: true
   refine_focal_length: false
   refine_principal_point: false
   refine_extra_params: false
+  final_refine_focal_length: true
+  # Final general geometric filter (once, after the last BA; never radius or
+  # ground-truth based): minimum track length (2-view points are the dominant
+  # extreme-outlier source and cannot be multi-view verified), per-observation
+  # reprojection error, positive depth, multi-view depth consistency, and the
+  # regular min triangulation angle.
+  final_min_track_length: 3
+  final_max_depth_ratio: 4.0
+  # COLMAP Mapper initialization checks.
+  init_max_forward_motion: 0.95
+  # Raised above the COLMAP default of 16 deg: adjacent ring cameras share a
+  # quasi-rotational two-view geometry whose weak baseline lets the incremental
+  # BA drift the seed pair together (baseline collapse). A stronger minimum
+  # triangulation angle makes the initial pair selection prefer a wide-baseline
+  # seed (PyCOLMAP effectively initializes from such a pair on CylinderDIC).
+  # The candidate loop halves this threshold on exhaustion, so a dataset with
+  # only weak pairs still falls back to COLMAP's 16 deg behaviour.
+  init_min_tri_angle_degrees: 45.0
+  max_reg_trials: 3
+  init_num_trials: 10
+  # Structure-less (2D-2D epipolar) registration fallback is not ported: the
+  # official estimator relies on an epipolar minimal solver outside this
+  # codebase. Failed candidates are skipped (never aborting) and retried after
+  # global refinement instead.
+  structure_less_registration_fallback: false
+  # IncrementalTriangulator angle thresholds (degrees).
+  create_max_angle_error_degrees: 2.0
+  continue_max_angle_error_degrees: 2.0
+  re_max_angle_error_degrees: 5.0
+  re_min_ratio: 0.2
+  re_max_trials: 1
+  # COLMAP pipeline refinement loop parameters.
+  ba_local_max_refinements: 2
+  ba_local_max_refinement_change: 0.001
+  ba_global_max_refinements: 5
+  ba_global_max_refinement_change: 0.0005
+  # COLMAP Reconstruction::Normalize after init and during global refinement.
+  normalize_reconstruction: true
 
 scale:
   # Used after self-calibration when a visible chessboard is used to recover
@@ -74,3 +132,9 @@ scale:
   max_reprojection_error: 3.0
   trim_fraction: 0.20
   min_common_corners: 12
+
+outputs:
+  # Named result subdirectory under <case_root>/result/. Keeps the migrated
+  # exhaustive/staged self-calibration output separate from the previous
+  # windowed-matching baseline in <case_root>/result/calibration/.
+  result_subdir: calibration_final

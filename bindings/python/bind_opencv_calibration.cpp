@@ -1,6 +1,7 @@
-#include <neurodic/calibration/traditional/mono_calibration.hpp>
-#include <neurodic/calibration/traditional/multiview_calibration.hpp>
-#include <neurodic/calibration/traditional/stereo_calibration.hpp>
+#include <neurodic/calibration/mono_calibration.hpp>
+#include <neurodic/calibration/multiview_calibration.hpp>
+#include <neurodic/calibration/calibration_result.hpp>
+#include <neurodic/calibration/stereo_calibration.hpp>
 
 #include <pybind11/eigen.h>
 #include <pybind11/pybind11.h>
@@ -8,7 +9,7 @@
 
 namespace py = pybind11;
 
-void bind_traditional_calibration(py::module_& m)
+void bind_opencv_calibration(py::module_& m)
 {
     auto sub = m.def_submodule("calibration");
 
@@ -119,13 +120,34 @@ void bind_traditional_calibration(py::module_& m)
         .def_readwrite("observations", &neurodic::calibration::SparsePoint3D::observations)
         .def_readwrite("reprojection_error", &neurodic::calibration::SparsePoint3D::reprojection_error);
 
+    py::class_<neurodic::calibration::SparsePointDiagnostic>(sub, "SparsePointDiagnostic")
+        .def(py::init<>())
+        .def_readwrite("point_id", &neurodic::calibration::SparsePointDiagnostic::point_id)
+        .def_readwrite("track_length", &neurodic::calibration::SparsePointDiagnostic::track_length)
+        .def_readwrite("images", &neurodic::calibration::SparsePointDiagnostic::images)
+        .def_readwrite("per_observation_errors", &neurodic::calibration::SparsePointDiagnostic::per_observation_errors)
+        .def_readwrite("max_triangulation_angle_degrees", &neurodic::calibration::SparsePointDiagnostic::max_triangulation_angle_degrees)
+        .def_readwrite("median_triangulation_angle_degrees", &neurodic::calibration::SparsePointDiagnostic::median_triangulation_angle_degrees)
+        .def_readwrite("all_positive_depth", &neurodic::calibration::SparsePointDiagnostic::all_positive_depth)
+        .def_readwrite("creation_source", &neurodic::calibration::SparsePointDiagnostic::creation_source)
+        .def_readwrite("max_depth_ratio", &neurodic::calibration::SparsePointDiagnostic::max_depth_ratio)
+        .def_readwrite("xyz_before_final_ba", &neurodic::calibration::SparsePointDiagnostic::xyz_before_final_ba)
+        .def_readwrite("rms_before_final_ba", &neurodic::calibration::SparsePointDiagnostic::rms_before_final_ba)
+        .def_readwrite("xyz_after_final_ba", &neurodic::calibration::SparsePointDiagnostic::xyz_after_final_ba)
+        .def_readwrite("rms_after_final_ba", &neurodic::calibration::SparsePointDiagnostic::rms_after_final_ba)
+        .def_readwrite("kept_by_final_filter", &neurodic::calibration::SparsePointDiagnostic::kept_by_final_filter);
+
     py::class_<neurodic::calibration::MultiviewCalibrationOptions>(sub, "MultiviewCalibrationOptions")
         .def(py::init<>())
         .def_readwrite("max_features", &neurodic::calibration::MultiviewCalibrationOptions::max_features)
         .def_readwrite("match_ratio", &neurodic::calibration::MultiviewCalibrationOptions::match_ratio)
+        .def_readwrite("sift_contrast_threshold", &neurodic::calibration::MultiviewCalibrationOptions::sift_contrast_threshold)
+        .def_readwrite("root_sift", &neurodic::calibration::MultiviewCalibrationOptions::root_sift)
+        .def_readwrite("bidirectional_matching", &neurodic::calibration::MultiviewCalibrationOptions::bidirectional_matching)
         .def_readwrite("ransac_reprojection_threshold", &neurodic::calibration::MultiviewCalibrationOptions::ransac_reprojection_threshold)
         .def_readwrite("min_triangulation_angle_degrees", &neurodic::calibration::MultiviewCalibrationOptions::min_triangulation_angle_degrees)
         .def_readwrite("min_inlier_matches", &neurodic::calibration::MultiviewCalibrationOptions::min_inlier_matches)
+        .def_readwrite("matching_mode", &neurodic::calibration::MultiviewCalibrationOptions::matching_mode)
         .def_readwrite("matching_window", &neurodic::calibration::MultiviewCalibrationOptions::matching_window)
         .def_readwrite("wrap_matching", &neurodic::calibration::MultiviewCalibrationOptions::wrap_matching)
         .def_readwrite("initial_image1", &neurodic::calibration::MultiviewCalibrationOptions::initial_image1)
@@ -142,14 +164,57 @@ void bind_traditional_calibration(py::module_& m)
         .def_readwrite("refine_principal_point", &neurodic::calibration::MultiviewCalibrationOptions::refine_principal_point)
         .def_readwrite("refine_extra_params", &neurodic::calibration::MultiviewCalibrationOptions::refine_extra_params)
         .def_readwrite("share_intrinsics", &neurodic::calibration::MultiviewCalibrationOptions::share_intrinsics)
+        .def_readwrite("init_max_forward_motion", &neurodic::calibration::MultiviewCalibrationOptions::init_max_forward_motion)
+        .def_readwrite("init_min_tri_angle_degrees", &neurodic::calibration::MultiviewCalibrationOptions::init_min_tri_angle_degrees)
+        .def_readwrite("max_reg_trials", &neurodic::calibration::MultiviewCalibrationOptions::max_reg_trials)
+        .def_readwrite("init_num_trials", &neurodic::calibration::MultiviewCalibrationOptions::init_num_trials)
+        .def_readwrite("structure_less_registration_fallback", &neurodic::calibration::MultiviewCalibrationOptions::structure_less_registration_fallback)
+        .def_readwrite("create_max_angle_error_degrees", &neurodic::calibration::MultiviewCalibrationOptions::create_max_angle_error_degrees)
+        .def_readwrite("continue_max_angle_error_degrees", &neurodic::calibration::MultiviewCalibrationOptions::continue_max_angle_error_degrees)
+        .def_readwrite("re_max_angle_error_degrees", &neurodic::calibration::MultiviewCalibrationOptions::re_max_angle_error_degrees)
+        .def_readwrite("re_min_ratio", &neurodic::calibration::MultiviewCalibrationOptions::re_min_ratio)
+        .def_readwrite("re_max_trials", &neurodic::calibration::MultiviewCalibrationOptions::re_max_trials)
+        .def_readwrite("ba_local_max_refinements", &neurodic::calibration::MultiviewCalibrationOptions::ba_local_max_refinements)
+        .def_readwrite("ba_local_max_refinement_change", &neurodic::calibration::MultiviewCalibrationOptions::ba_local_max_refinement_change)
+        .def_readwrite("ba_global_max_refinements", &neurodic::calibration::MultiviewCalibrationOptions::ba_global_max_refinements)
+        .def_readwrite("ba_global_max_refinement_change", &neurodic::calibration::MultiviewCalibrationOptions::ba_global_max_refinement_change)
+        .def_readwrite("normalize_reconstruction", &neurodic::calibration::MultiviewCalibrationOptions::normalize_reconstruction)
+        .def_readwrite("final_refine_focal_length", &neurodic::calibration::MultiviewCalibrationOptions::final_refine_focal_length)
+        .def_readwrite("final_min_track_length", &neurodic::calibration::MultiviewCalibrationOptions::final_min_track_length)
+        .def_readwrite("final_max_depth_ratio", &neurodic::calibration::MultiviewCalibrationOptions::final_max_depth_ratio)
         .def_readwrite("initial_cameras", &neurodic::calibration::MultiviewCalibrationOptions::initial_cameras);
+
+    py::class_<neurodic::calibration::MultiviewStageStat>(sub, "MultiviewStageStat")
+        .def(py::init<>())
+        .def_readwrite("stage", &neurodic::calibration::MultiviewStageStat::stage)
+        .def_readwrite("num_registered_cameras", &neurodic::calibration::MultiviewStageStat::num_registered_cameras)
+        .def_readwrite("num_points3d", &neurodic::calibration::MultiviewStageStat::num_points3d)
+        .def_readwrite("num_observations", &neurodic::calibration::MultiviewStageStat::num_observations)
+        .def_readwrite("mean_reprojection_error", &neurodic::calibration::MultiviewStageStat::mean_reprojection_error)
+        .def_readwrite("focal_length", &neurodic::calibration::MultiviewStageStat::focal_length)
+        .def_readwrite("principal_point_x", &neurodic::calibration::MultiviewStageStat::principal_point_x)
+        .def_readwrite("principal_point_y", &neurodic::calibration::MultiviewStageStat::principal_point_y)
+        .def_readwrite("distortion_k1", &neurodic::calibration::MultiviewStageStat::distortion_k1);
+
+    py::class_<neurodic::calibration::MultiviewRegistrationAttempt>(sub, "MultiviewRegistrationAttempt")
+        .def(py::init<>())
+        .def_readwrite("image_index", &neurodic::calibration::MultiviewRegistrationAttempt::image_index)
+        .def_readwrite("success", &neurodic::calibration::MultiviewRegistrationAttempt::success)
+        .def_readwrite("reason", &neurodic::calibration::MultiviewRegistrationAttempt::reason)
+        .def_readwrite("num_visible_points", &neurodic::calibration::MultiviewRegistrationAttempt::num_visible_points)
+        .def_readwrite("num_pnp_correspondences", &neurodic::calibration::MultiviewRegistrationAttempt::num_pnp_correspondences)
+        .def_readwrite("num_pnp_inliers", &neurodic::calibration::MultiviewRegistrationAttempt::num_pnp_inliers);
 
     py::class_<neurodic::calibration::MultiviewCalibrationResult>(sub, "MultiviewCalibrationResult")
         .def(py::init<>())
         .def_readwrite("cameras", &neurodic::calibration::MultiviewCalibrationResult::cameras)
         .def_readwrite("sparse_points", &neurodic::calibration::MultiviewCalibrationResult::sparse_points)
         .def_readwrite("inlier_match_counts", &neurodic::calibration::MultiviewCalibrationResult::inlier_match_counts)
-        .def_readwrite("mean_reprojection_error", &neurodic::calibration::MultiviewCalibrationResult::mean_reprojection_error);
+        .def_readwrite("mean_reprojection_error", &neurodic::calibration::MultiviewCalibrationResult::mean_reprojection_error)
+        .def_readwrite("stage_stats", &neurodic::calibration::MultiviewCalibrationResult::stage_stats)
+        .def_readwrite("registration_attempts", &neurodic::calibration::MultiviewCalibrationResult::registration_attempts)
+        .def_readwrite("pipeline_log", &neurodic::calibration::MultiviewCalibrationResult::pipeline_log)
+        .def_readwrite("point_diagnostics", &neurodic::calibration::MultiviewCalibrationResult::point_diagnostics);
 
     py::class_<neurodic::calibration::MultiviewScaleObservation>(sub, "MultiviewScaleObservation")
         .def(py::init<>())
@@ -186,5 +251,7 @@ void bind_traditional_calibration(py::module_& m)
     sub.def("calibrate_stereo_zhang", &neurodic::calibration::calibrate_stereo_zhang, py::arg("left_image_paths"), py::arg("right_image_paths"), py::arg("board"), py::arg("options") = neurodic::calibration::StereoCalibrationOptions{});
     sub.def("calibrate_stereo_from_points", &neurodic::calibration::calibrate_stereo_from_points, py::arg("object_points"), py::arg("left_image_points"), py::arg("right_image_points"), py::arg("image_width"), py::arg("image_height"), py::arg("options") = neurodic::calibration::StereoCalibrationOptions{});
     sub.def("calibrate_multiview_colmap_like", &neurodic::calibration::calibrate_multiview_colmap_like, py::arg("image_paths"), py::arg("options") = neurodic::calibration::MultiviewCalibrationOptions{});
+    sub.def("to_core_calibration_result", &neurodic::calibration::to_core_calibration_result,
+            py::arg("reconstruction"));
     sub.def("estimate_multiview_chessboard_scale", &neurodic::calibration::estimate_multiview_chessboard_scale, py::arg("cameras"), py::arg("sparse_points"), py::arg("observations"), py::arg("options"));
 }
