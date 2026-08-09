@@ -54,10 +54,12 @@ if(NEURODIC_TORCH_FOUND)
         src/representation/ndef_deformation_field.cpp
         src/problem/pin_problem.cpp
         src/problem/pin_stereo_problem.cpp
+        src/problem/pin_multi_problem.cpp
         src/problem/ndef_problem.cpp
         src/problem/ndef_surface_problem.cpp
         src/solver/pin_solver.cpp
         src/solver/pin_stereo_solver.cpp
+        src/solver/pin_multi_slover.cpp
         src/solver/ndef_solver.cpp
         src/solver/ndef_surface_solver.cpp
     )
@@ -136,6 +138,7 @@ if(NEURODIC_BUILD_TESTS AND NEURODIC_TORCH_FOUND)
         tests/cpp/test_solver_interfaces.cpp
         tests/cpp/test_pin_solver.cpp
         tests/cpp/test_pin_stereo_solver.cpp
+        tests/cpp/test_pin_multi_solver.cpp
         tests/cpp/test_ndef_solver.cpp
         tests/cpp/test_ndef_precalculation.cpp
     )

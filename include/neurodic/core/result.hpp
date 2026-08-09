@@ -54,6 +54,15 @@ struct PINStereoResult {
     torch::Tensor current_reprojection_error;    // CPU float64 [N]
 };
 
+struct PINMultiPairResult {
+    std::string pair_id;          // Stable label, for example "cam_0__cam_1".
+    PINStereoResult result;
+};
+
+struct PINMultiResult {
+    std::vector<PINMultiPairResult> pairs;
+};
+
 struct NDeFResult {
     FieldResult surface;      // coordinates=reference surface; values=current surface
     FieldResult deformation;

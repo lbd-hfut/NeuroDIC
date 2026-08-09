@@ -7,7 +7,8 @@ differentiable core, pybind11 bindings, and a thin Python workflow layer.
 NeuroDIC
 ├── PINSolver
 │   ├── PIN-DIC 2D
-│   └── PIN-DIC Stereo
+│   ├── PIN-DIC Stereo
+│   └── PINMultiSolver (pin_multi_slover, pairwise multi-view)
 └── NDeFSolver
     └── NDeF multi-view surface deformation
 ```
@@ -241,6 +242,53 @@ color scales are symmetric around zero.
 
 The detailed Python-to-C++ deformation audit is in
 [`docs/migration_ndef_deformation.md`](docs/migration_ndef_deformation.md).
+
+## Running pairwise multi-view PIN-DIC (pin_multi_slover)
+
+The independent multi-camera PIN route runs per selected camera pair: pair ROI
+masks come from reference-time SIFT matches (not NDeF masks), each pair solves
+three planar PIN fields in C++ (`A0→B0`, `A0→Ak`, `A0→Bk`), and every pair is
+reconstructed independently into `X0`, `Xk` and `dX`.
+
+```bash
+$ND_ENV/bin/python -u -c \
+  "import neurodic; neurodic.pin_multi_slover_dic('config/pin_multi_slover.yaml')"
+```
+
+The example configuration is [`config/pin_multi_slover.yaml`](config/pin_multi_slover.yaml);
+its CylinderDIC case root is `case/Multi/CylinderDIC`. Camera pairs are selected
+with `camera_pairs.selection: auto_spatial_neighbors` (neighbor topology from
+the calibration `camera_pairs.json`, closed ring with `wrap: true`). Outputs:
+
+```text
+result/pin_multi_slover/
+  pair_roi/<pair_id>/       SIFT matches, left/right masks, overlay, meta
+  pairs/<pair_id>/disp/     three planar PIN fields
+  pairs/<pair_id>/reconstruct/{reference,current}.npz
+  pairs/<pair_id>/deformation/initial_to_current.npz
+  pairs/<pair_id>/quality/  per-point reason codes + quality.json
+  fused/                    optional pairwise fusion (disabled by default)
+  manifest.json             pair ROIs, solve statistics, fusion summary
+visualization/pin_multi_slover/...
+```
+
+Per-point reason codes (`quality/reason_codes.npy`) flag invalid fields,
+out-of-ROI, out-of-bounds, negative depth, and reprojection-error points with
+pair-level counts. Fusion is explicit:
+
+```yaml
+fusion:
+  enabled: false            # enable only after pairwise products are validated
+  voxel_size: 1.0           # world units; deduplicates per voxel cell
+  displacement_mad_factor: 5.0   # drop points above median + factor*MAD |dX|
+  remove_rigid_body_motion: false
+```
+
+When enabled, `fused/` keeps the highest-confidence point per voxel cell with
+source pair provenance (`source_pair`) and reports removed counts (reprojection
+and displacement MAD).  Strain postprocessing belongs to the shared C++
+`src/postprocess` route. The workflow never reads or writes
+`result/mask/per_camera`, which stays owned by the NDeF ROI stage.
 
 ## Architecture rules
 

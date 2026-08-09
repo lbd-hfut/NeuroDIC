@@ -9,14 +9,14 @@ interpolation:
   degree: 5
 model:
   type: mlp
-  hidden_dim: 64
-  hidden_layers: 5
+  hidden_dim: 32
+  hidden_layers: 3
   activation: tanh
   fourier_encoding:
     # Fixed NDeF-style dyadic Fourier basis, not MSPINN's random B matrix.
-    enabled: false
-    num_frequencies: 6
-    include_input: true
+    enabled: true
+    num_frequencies: 4
+    include_input: false
     angular_scale: 3.141592653589793
 notes:
   - C++ PINSolver handles this mode.
@@ -28,12 +28,12 @@ training:
   seed_iterations: 5000
   # Per component: use seed MSE only when the cleaned seed half-range is strictly above this pixel value.
   seed_pretrain_uv_scale_threshold: 8.0
-  photometric_iterations: 300
+  photometric_iterations: 1000
   photometric_sample_count: 16384
   seed_learning_rate: 1.0e-3
   photometric_learning_rate: 5.0e-4
 initialization:
-  strategy: integer_search  # integer_search | sift_search
+  strategy: sift_search  # integer_search | sift_search
   target_seed_count: 256
   outlier_rejection:
     method: mad

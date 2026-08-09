@@ -1,13 +1,27 @@
 #include "neurodic/solver/pin_multi_slover.hpp"
 
-#include "neurodic/core/exceptions.hpp"
+#include <utility>
+
+#include "neurodic/problem/pin_stereo_problem.hpp"
+#include "neurodic/solver/pin_stereo_solver.hpp"
 
 namespace neurodic {
 
-void PINMultiSolver::solve(const PINMultiProblem& problem) const {
+PINMultiResult PINMultiSolver::solve(const PINMultiProblem& problem) const {
     problem.validate();
-    throw ValidationError(
-        "pin_multi_slover is a reserved route placeholder; pairwise PIN multi-view solving is not implemented yet");
+    PINMultiResult result;
+    result.pairs.reserve(problem.pairs.size());
+    PINStereoSolver stereo_solver;
+    for (const auto& pair : problem.pairs) {
+        PINStereoProblem stereo(
+            pair.reference_stereo, pair.left_temporal, pair.deformed_stereo,
+            pair.left_camera, pair.right_camera);
+        stereo.world_scale = problem.world_scale;
+        stereo.require_image_bounds = problem.require_image_bounds;
+        stereo.reconstruction = problem.reconstruction;
+        result.pairs.push_back({pair.pair_id, stereo_solver.solve(stereo)});
+    }
+    return result;
 }
 
 }  // namespace neurodic

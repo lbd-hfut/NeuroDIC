@@ -8,7 +8,10 @@ runtime:
 case:
   root: case/Multi/CylinderDIC
   images: images
-  calibration: result/calibration/calibration_result_scaled.json
+  # `run_multiview_case` writes the current staged self-calibration result here.
+  # Its cameras are already transformed into the metric chessboard frame, so
+  # reconstruction.world_scale remains 1.0 and must not reapply the SfM scale.
+  calibration: result/calibration_final/calibration_result_scaled.json
   reference_frame: 001.bmp
   frame: -1
 camera_pairs:
@@ -27,18 +30,23 @@ pair_roi:
   support: convex_hull
   alpha_radius_scale: 8.0
   erode_pixels: 0
-pairwise_pin:
-  # For each A-B pair: A0->B0, A0->Ak, A0->Bk.
-  interpolation: {type: bspline, degree: 5}
-  model: {type: mlp, hidden_dim: 32, hidden_layers: 3}
-  training: {device: cuda, photometric_loss: znssd}
+# Every A0->B0, A0->Ak, and A0->Bk planar field uses this configuration.
+# Do not duplicate model, initialization, or training options in this file.
+pin_2d_config: config/pin_2d.yaml
 reconstruction:
   min_views: 2
   max_reprojection_error_px: 5.0
   require_positive_depth: true
   world_scale: 1.0
 fusion:
-  enabled: false  # Placeholder: pairwise surfaces must be available first.
+  enabled: false  # Pairwise surfaces must be validated before enabling.
+  voxel_size: 1.0
+  max_reprojection_error_px: 5.0
+  displacement_mad_factor: 5.0
+  # Remove spatially isolated points from the fused reference surface.  The
+  # same mask is applied to current surface and displacement visualization.
+  surface_outlier_k_neighbors: 16
+  surface_outlier_mad_factor: 5.0
   remove_rigid_body_motion: false
 output:
   result: result/pin_multi_slover
@@ -46,3 +54,4 @@ output:
 notes:
   - This route owns pair-local SIFT ROI masks created from reference-time images.
   - Do not use case.result/mask/per_camera; that location belongs to NDeF ROI generation.
+  - The pairwise planar solver configuration is loaded from pin_2d_config.

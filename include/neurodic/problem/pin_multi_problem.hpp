@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "neurodic/calibration/camera_model.hpp"
+#include "neurodic/geometry/triangulation.hpp"
 #include "neurodic/problem/pin_problem.hpp"
 
 namespace neurodic {
@@ -30,7 +31,9 @@ struct PINMultiProblem {
     // compatibility with the requested route name.
     std::string route_id{"pin_multi_slover"};
     std::vector<PINMultiPairProblem> pairs;
+    ReconstructionOptions reconstruction;
     double world_scale{1.0};
+    bool require_image_bounds{true};
     bool remove_rigid_body_motion{false};
 
     void validate() const;

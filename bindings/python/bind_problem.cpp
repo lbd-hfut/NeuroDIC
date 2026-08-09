@@ -6,6 +6,7 @@
 
 #include "neurodic/problem/pin_problem.hpp"
 #include "neurodic/problem/pin_stereo_problem.hpp"
+#include "neurodic/problem/pin_multi_problem.hpp"
 #include "neurodic/problem/ndef_problem.hpp"
 #include "neurodic/problem/ndef_surface_problem.hpp"
 
@@ -57,6 +58,29 @@ void bind_problem(py::module_& module) {
         }, py::arg("max_reprojection_error"), py::arg("require_positive_depth") = true,
            py::arg("undistort_iterations") = 12)
         .def("validate", &neurodic::PINStereoProblem::validate);
+
+    py::class_<neurodic::PINMultiProblem>(module, "PINMultiProblem")
+        .def(py::init<>())
+        .def_readwrite("route_id", &neurodic::PINMultiProblem::route_id)
+        .def_readwrite("world_scale", &neurodic::PINMultiProblem::world_scale)
+        .def_readwrite("require_image_bounds", &neurodic::PINMultiProblem::require_image_bounds)
+        .def_readwrite("remove_rigid_body_motion", &neurodic::PINMultiProblem::remove_rigid_body_motion)
+        .def("add_pair", [](neurodic::PINMultiProblem& problem, const std::string& pair_id,
+                            const neurodic::PINProblem& reference_stereo, const neurodic::PINProblem& left_temporal,
+                            const neurodic::PINProblem& deformed_stereo, const neurodic::CameraModel& left_camera,
+                            const neurodic::CameraModel& right_camera) {
+            problem.pairs.push_back({pair_id, reference_stereo, left_temporal, deformed_stereo,
+                                     left_camera, right_camera});
+        }, py::arg("pair_id"), py::arg("reference_stereo"), py::arg("left_temporal"),
+           py::arg("deformed_stereo"), py::arg("left_camera"), py::arg("right_camera"))
+        .def("set_reconstruction_options", [](neurodic::PINMultiProblem& problem, double max_error,
+                                               bool positive_depth, int undistort_iterations) {
+            problem.reconstruction.max_reprojection_error = max_error;
+            problem.reconstruction.require_positive_depth = positive_depth;
+            problem.reconstruction.undistort_iterations = undistort_iterations;
+        }, py::arg("max_reprojection_error"), py::arg("require_positive_depth") = true,
+           py::arg("undistort_iterations") = 12)
+        .def("validate", &neurodic::PINMultiProblem::validate);
 
     py::class_<neurodic::NDeFProblem>(module, "NDeFProblem")
         .def(py::init<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,

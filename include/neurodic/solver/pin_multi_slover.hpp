@@ -1,15 +1,20 @@
-/** Placeholder orchestration interface for the pin_multi_slover route. */
+/** Pairwise orchestration for the independent multi-camera PIN-DIC route.
+
+ *  Every selected camera pair is solved independently: the three planar PIN
+ *  fields (A0->B0, A0->Ak, A0->Bk) feed the validated stereo reconstruction
+ *  path, and each pair keeps its own X0/Xk/dX products.  Fusion of the
+ *  pairwise surfaces is a later, separately enabled stage.
+ */
 #pragma once
 
+#include "neurodic/core/result.hpp"
 #include "neurodic/problem/pin_multi_problem.hpp"
 
 namespace neurodic {
 
-// The implementation will run pairwise PIN fields, reconstruct X0/Xk for
-// each pair, then fuse pair surfaces and their 3D displacement fields.
 class PINMultiSolver {
 public:
-    void solve(const PINMultiProblem& problem) const;
+    PINMultiResult solve(const PINMultiProblem& problem) const;
 };
 
 }  // namespace neurodic

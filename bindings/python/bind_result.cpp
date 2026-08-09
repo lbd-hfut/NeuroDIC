@@ -31,6 +31,11 @@ void bind_result(py::module_& module) {
         .def_readonly("valid", &neurodic::PINStereoResult::valid)
         .def_readonly("reference_reprojection_error", &neurodic::PINStereoResult::reference_reprojection_error)
         .def_readonly("current_reprojection_error", &neurodic::PINStereoResult::current_reprojection_error);
+    py::class_<neurodic::PINMultiPairResult>(module, "PINMultiPairResult")
+        .def_readonly("pair_id", &neurodic::PINMultiPairResult::pair_id)
+        .def_readonly("result", &neurodic::PINMultiPairResult::result);
+    py::class_<neurodic::PINMultiResult>(module, "PINMultiResult")
+        .def_readonly("pairs", &neurodic::PINMultiResult::pairs);
     py::class_<neurodic::NDeFResult>(module, "NDeFResult")
         .def_readonly("surface", &neurodic::NDeFResult::surface)
         .def_readonly("deformation", &neurodic::NDeFResult::deformation)
