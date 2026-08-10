@@ -32,6 +32,6 @@ resnet.hpp / siren.hpp  ResNet / SIREN 模型外壳（未来 PIN 分支候选）
   Python `models.py` 暴露选择。
 - **NDeF**：`NDeFInternalModel` 由 `NDeFSolver` 内部控制（不对外暴露层数/宽度/
   跳连）；`NDeFDepthModel` 由 `NDeFSurfaceSolver` 使用（参考表面/深度网络，
-  `config/ndef_multiview.yaml` 配置预训练与稠密细化超参）。
+  `config/ndef_multi.yaml` 配置预训练与稠密细化超参）。
 - 模型输出是神经场原始输出，由 `representation/` 解码为物理场后再进入损失。
 - 全部模型继承 `torch::nn::Module`，参数优化走 LibTorch autograd。

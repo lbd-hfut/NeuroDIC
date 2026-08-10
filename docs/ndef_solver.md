@@ -34,5 +34,5 @@ NDeFResult（SolverDiagnostics + 场张量）
   `dense_neighbors[V,2]`（无拓扑邻居记为 -1）。
 
 Python API `ndef_dic()` / `pretrain_ndef_surface()`（`python/neurodic/api/ndef_dic.py`、
-`ndef_surface.py`）装配 `config/ndef_multiview.yaml` 并调用绑定；公共 Python/YAML
+`ndef_surface.py`）装配 `config/ndef_multi.yaml` 并调用绑定；公共 Python/YAML
 接口不得暴露任意 NDeF 层数、宽度、跳连拓扑或内部分支。

@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from ..config import load_config
+from ..ndef_paths import camera_name_from_label, ndef_run_roots
 from ..models import _require_backend
 from ..runtime import configure_runtime
 
@@ -133,12 +134,12 @@ def _plot_displacement_components_3d(points: np.ndarray, displacement: np.ndarra
 
 def _save(result, result_root: Path, visualization_root: Path, surface_payload: Mapping[str, Any],
           camera_names: list[str]) -> None:
-    reconstruct = result_root / "ndef" / "reconstruct"
-    deformation = result_root / "ndef" / "deformation"
-    diagnostics = result_root / "ndef" / "diagnostics"
-    vis_surface = visualization_root / "ndef" / "reconstruct"
-    vis_deformation = visualization_root / "ndef" / "deformation"
-    vis_diagnostics = visualization_root / "ndef" / "diagnostics"
+    reconstruct = result_root / "reconstruct"
+    deformation = result_root / "deformation"
+    diagnostics = result_root / "diagnostics"
+    vis_surface = visualization_root / "reconstruct"
+    vis_deformation = visualization_root / "deformation"
+    vis_diagnostics = visualization_root / "diagnostics"
     for directory in (reconstruct, deformation, diagnostics, vis_surface, vis_deformation, vis_diagnostics):
         directory.mkdir(parents=True, exist_ok=True)
     reference, current = result.surface.coordinates.numpy(), result.surface.values.numpy()
@@ -251,7 +252,7 @@ def _save(result, result_root: Path, visualization_root: Path, surface_payload: 
         figure.savefig(vis_diagnostics / "training_loss.png", dpi=160); plt.close(figure)
 
 
-def ndef_sparse_precalculation(config: str | Path | Mapping[str, Any] = "config/ndef_multiview.yaml", *, write_case_artifacts: bool = True):
+def ndef_sparse_precalculation(config: str | Path | Mapping[str, Any] = "config/ndef_multi.yaml", *, write_case_artifacts: bool = True):
     """Compile-time C++ sparse patch-DIC matching and two-time multi-view DLT.
 
     The supplied reference surface is used solely for cross-camera search
@@ -264,7 +265,8 @@ def ndef_sparse_precalculation(config: str | Path | Mapping[str, Any] = "config/
     calibration_payload = json.loads(_resolve(root, case["calibration"]).read_text(encoding="utf-8"))
     camera_values = calibration_payload.get("cameras", calibration_payload.get("scaled_cameras"))
     if camera_values is None: raise ValueError("calibration must contain cameras or scaled_cameras")
-    names = [str(item.get("label", f"cam_{index}")) for index, item in enumerate(camera_values)]
+    names = [camera_name_from_label(str(item.get("label", "")), f"cam_{index}")
+             for index, item in enumerate(camera_values)]
     frame = int(case.get("frame", -1)); reference, current = [], []
     for name in names:
         paths = sorted(path for path in (image_root / name).iterdir() if path.is_file())
@@ -303,8 +305,8 @@ def ndef_sparse_precalculation(config: str | Path | Mapping[str, Any] = "config/
         torch.from_numpy(np.asarray(visibility, dtype=bool)), torch.from_numpy(np.asarray(uv, dtype=np.float64)),
         [_camera(backend, item) for item in camera_values])
     if write_case_artifacts:
-        output = Path(values.get("output", {}).get("result", "result")); output = output if output.is_absolute() else root / output
-        folder = output / "ndef" / "precalculation"; folder.mkdir(parents=True, exist_ok=True)
+        output, _ = ndef_run_roots(root, values)
+        folder = output / "precalculation"; folder.mkdir(parents=True, exist_ok=True)
         np.savez(folder / "sparse_tracks.npz", source_camera=result.source_camera.numpy(), source_uv=result.source_uv.numpy(),
                  reference_points=result.reference_points.numpy(), current_points=result.current_points.numpy(),
                  displacement=result.displacement.numpy(), displacement_magnitude=result.displacement_magnitude.numpy(),
@@ -327,7 +329,7 @@ def ndef_sparse_precalculation(config: str | Path | Mapping[str, Any] = "config/
     return result
 
 
-def ndef_dic(config: str | Path | Mapping[str, Any] = "config/ndef_multiview.yaml", *, write_case_artifacts: bool = True):
+def ndef_dic(config: str | Path | Mapping[str, Any] = "config/ndef_multi.yaml", *, write_case_artifacts: bool = True):
     """Run C++/LibTorch NDeF optimization for one synchronized multi-view frame."""
     backend = _require_backend()
     values = _mapping(config)
@@ -338,7 +340,8 @@ def ndef_dic(config: str | Path | Mapping[str, Any] = "config/ndef_multiview.yam
     calibration = json.loads(_resolve(root, case["calibration"]).read_text(encoding="utf-8"))
     camera_values = calibration.get("cameras", calibration.get("scaled_cameras"))
     if camera_values is None: raise ValueError("calibration must contain cameras or scaled_cameras")
-    names = [str(camera.get("label", f"cam_{index}")) for index, camera in enumerate(camera_values)]
+    names = [camera_name_from_label(str(camera.get("label", "")), f"cam_{index}")
+             for index, camera in enumerate(camera_values)]
     frame = int(case.get("frame", -1))
     reference, deformed = [], []
     for name in names:
@@ -419,7 +422,6 @@ def ndef_dic(config: str | Path | Mapping[str, Any] = "config/ndef_multiview.yam
     problem.set_device(str(training.get("device", "cpu")))
     result = backend.NDeFSolver().solve(problem)
     if write_case_artifacts:
-        output = Path(values.get("output", {}).get("result", "result")); visual = Path(values.get("output", {}).get("visualization", "visualization"))
-        _save(result, output if output.is_absolute() else root / output,
-              visual if visual.is_absolute() else root / visual, surface_payload, names)
+        output, visual = ndef_run_roots(root, values)
+        _save(result, output, visual, surface_payload, names)
     return result

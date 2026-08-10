@@ -211,7 +211,9 @@ def _save_visualizations(root: Path, name: str, image: np.ndarray, built: Mappin
     cv2.imwrite(str(root / "common_observations" / f"{name}_common_observations.png"), points_image)
 
 
-def generate_ndef_roi(case_root: str | Path, options: NDeFROIOptions | None = None) -> dict[str, Any]:
+def generate_ndef_roi(case_root: str | Path, options: NDeFROIOptions | None = None, *,
+                      result_root: str | Path | None = None,
+                      visualization_root: str | Path | None = None) -> dict[str, Any]:
     """Generate pair-supported masks and diagnostics for one calibrated case."""
     import cv2
     options = options or NDeFROIOptions()
@@ -224,7 +226,11 @@ def generate_ndef_roi(case_root: str | Path, options: NDeFROIOptions | None = No
     names = list(pair_data["camera_names"])
     image_by_name = {Path(path).parent.name: Path(path) for path in summary["image_paths"]}
     index_by_name = {name: index for index, name in enumerate(names)}
-    result_root, visualization_root = root / "result" / "mask", root / "visualization" / "mask"
+    result_root = Path(result_root) if result_root is not None else root / "result" / "mask"
+    visualization_root = (Path(visualization_root) if visualization_root is not None
+                          else root / "visualization" / "mask")
+    if not result_root.is_absolute(): result_root = root / result_root
+    if not visualization_root.is_absolute(): visualization_root = root / visualization_root
     per_camera = result_root / "per_camera"
     per_camera.mkdir(parents=True, exist_ok=True)
     records, masks = [], []

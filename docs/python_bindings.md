@@ -32,4 +32,4 @@ visualization/               calibration.py / seeds.py：标定与种子可视�
 ```
 
 配置入口使用 `config/*.yaml`（`config/pin_2d.yaml`、`config/pin_stereo.yaml`、
-`config/ndef_multiview.yaml`、`config/calibration.yaml` 等）。
+`config/ndef_multi.yaml`、`config/calibration.yaml` 等）。

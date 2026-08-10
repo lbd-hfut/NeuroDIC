@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from ..config import load_config
+from ..ndef_paths import camera_name_from_label, ndef_run_roots
 from ..models import _require_backend
 
 
@@ -178,9 +179,9 @@ def _save_fused_surface_visualization(path,fusion,colour_by="visibility"):
         colours=fusion["visible_counts"]; label="consistent visible cameras"; title="Visibility/depth-consistency fused reference surface"
     fig=plt.figure(figsize=(8,7),constrained_layout=True); axis=fig.add_subplot(projection="3d"); plot=axis.scatter(points[:,0],points[:,1],points[:,2],c=colours,s=1,cmap="viridis"); axis.set(xlabel="world X",ylabel="world Y",zlabel="world Z",title=title); fig.colorbar(plot,ax=axis,label=label);fig.savefig(path,dpi=180);plt.close(fig)
 
-def pretrain_ndef_surface(config="config/ndef_multiview.yaml"):
+def pretrain_ndef_surface(config="config/ndef_multi.yaml"):
     values=load_config(config) if isinstance(config,(str,Path)) else config; case=values["case"]; root=Path(case["root"]); cal=root/case["calibration"]
-    payload=json.loads(cal.read_text()); cams,points=_calibration_geometry(payload); names=[x["label"] for x in cams]
+    payload=json.loads(cal.read_text()); cams,points=_calibration_geometry(payload); names=[camera_name_from_label(x.get("label", ""),f"cam_{index}") for index,x in enumerate(cams)]
     obs=np.load(root/"result/calibration/observations.npz"); xyz=np.asarray([p["xyz"] for p in points],np.float32)
     ids=obs["point_indices"].astype(int); ci=obs["cam_indices"].astype(int); uv=obs["uv"].astype(np.float32); R=np.asarray([x["R"] for x in cams],np.float32); t=np.asarray([x["t"] for x in cams],np.float32)
     sparse_filter_cfg=values.get("surface",{}).get("sparse_filter",{}); point_keep,sparse_filter=_filter_sparse_points(points,xyz,sparse_filter_cfg); observation_sparse_keep=point_keep[ids]
@@ -188,9 +189,14 @@ def pretrain_ndef_surface(config="config/ndef_multiview.yaml"):
     max_p95=float(values.get("surface",{}).get("max_reprojection_p95_px",5.0))
     if reprojection["p95"]>max_p95: raise ValueError(f"surface calibration cameras/points mismatch: reprojection p95={reprojection['p95']:.3f}px > {max_p95:.3f}px")
     depth=np.einsum("nij,nj->ni",R[ci],xyz[ids])+t[ci]; depth=depth[:,2]
+    mask_path=case.get("masks")
+    if mask_path is None:
+        mask_root,_=ndef_run_roots(root,values); mask_root=mask_root/"roi"/"per_camera"
+    else:
+        mask_root=Path(mask_path); mask_root=mask_root if mask_root.is_absolute() else root/mask_root
     masks=[]; queries=[]; query_c=[]; stride=1
     for k,n in enumerate(names):
-        m=np.load(root/"result/mask/per_camera"/f"{n}_mask.npy").astype(bool); masks.append(m); yy,xx=np.where(m[::stride,::stride]); queries.append(np.c_[xx*stride,yy*stride]);query_c.append(np.full(len(xx),k))
+        m=np.load(mask_root/f"{n}_mask.npy").astype(bool); masks.append(m); yy,xx=np.where(m[::stride,::stride]); queries.append(np.c_[xx*stride,yy*stride]);query_c.append(np.full(len(xx),k))
     roi_support=np.zeros(len(uv),dtype=bool)
     rounded=np.rint(uv).astype(np.int64)
     for camera_index,mask in enumerate(masks):
@@ -235,8 +241,9 @@ def pretrain_ndef_surface(config="config/ndef_multiview.yaml"):
         for key,attribute in mapping.items():
             if key in dense: setattr(p,attribute,dense[key])
     p.set_device(cfg.get("device","cuda")); r=backend.NDeFSurfaceSolver().solve(p)
-    pretrain_out=root/"result/pretrain/surface"; pretrain_vis=root/"visualization/pretrain/surface"; pretrain_out.mkdir(parents=True,exist_ok=True);pretrain_vis.mkdir(parents=True,exist_ok=True)
-    out=root/"result/surface"; vis=root/"visualization/surface"; out.mkdir(parents=True,exist_ok=True);vis.mkdir(parents=True,exist_ok=True)
+    run_out,run_vis=ndef_run_roots(root,values)
+    pretrain_out=run_out/"pretrain"/"surface"; pretrain_vis=run_vis/"pretrain"/"surface"; pretrain_out.mkdir(parents=True,exist_ok=True);pretrain_vis.mkdir(parents=True,exist_ok=True)
+    out=run_out/"surface"; vis=run_vis/"surface"; out.mkdir(parents=True,exist_ok=True);vis.mkdir(parents=True,exist_ok=True)
     roi_uv_bounds=np.asarray([[np.where(mask)[1].min(),np.where(mask)[0].min(),np.where(mask)[1].max(),np.where(mask)[0].max()] for mask in masks],np.float32)
     np.savez_compressed(pretrain_out/"surface_pretrain.npz",sparse_uv=uv[keep],sparse_camera=ci[keep],sparse_depth=depth[keep],sparse_prediction=r.sparse_prediction.numpy(),query_uv=r.query_uv.numpy(),query_camera=r.query_cameras.numpy(),query_depth=r.query_depth.numpy(),roi_uv_bounds=roi_uv_bounds,depth_mean=np.asarray(r.depth_mean),depth_std=np.asarray(r.depth_std))
     (pretrain_out/"surface_pretrain_meta.json").write_text(json.dumps({"kept_sparse_observations":int(keep.sum()),"rejected_by_sparse_filter":int((~observation_sparse_keep).sum()),"sparse_filter":sparse_filter,"rejected_outside_roi":int((~roi_support).sum()),"rejected_depth_outliers":int((roi_support&observation_sparse_keep&(~depth_clean)).sum()),"depth_median":float(med),"depth_mad":float(mad),"depth_normalization":{"mean":float(r.depth_mean),"std":float(r.depth_std)},"pixel_normalization":"full_image_width_height","calibration_reprojection_px":reprojection,"diagnostics":{"sparse_rmse":float(r.diagnostics.metrics["sparse_rmse"])}},indent=2))

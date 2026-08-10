@@ -57,7 +57,7 @@ $ND_ENV/bin/python -c "import neurodic; print(neurodic.native_available())"
 ## Running NDeF clearly
 
 The validated example configuration is
-[`config/ndef_multiview.yaml`](config/ndef_multiview.yaml), and its case root is
+[`config/ndef_multi.yaml`](config/ndef_multi.yaml), and its case root is
 `case/Multi/CylinderDIC`.
 
 ### NDeF input contract
@@ -94,7 +94,7 @@ Run this only when the surface dataset does not already exist:
 
 ```bash
 $ND_ENV/bin/python -u -c \
-  "import neurodic; neurodic.pretrain_ndef_surface('config/ndef_multiview.yaml')"
+  "import neurodic; neurodic.pretrain_ndef_surface('config/ndef_multi.yaml')"
 ```
 
 This runs sparse depth pretraining, dense ZNSSD refinement, dense inference, and
@@ -112,7 +112,7 @@ separate algorithms.
 
 ```bash
 $ND_ENV/bin/python -u -c \
-  "import neurodic; neurodic.ndef_sparse_precalculation('config/ndef_multiview.yaml')"
+  "import neurodic; neurodic.ndef_sparse_precalculation('config/ndef_multi.yaml')"
 ```
 
 This stage runs the C++/LibTorch sparse multi-view patch-DIC route:
@@ -137,7 +137,7 @@ field output scale. CylinderDIC currently uses `mean`.
 
 ```bash
 $ND_ENV/bin/python -u -c \
-  "import neurodic; neurodic.ndef_dic('config/ndef_multiview.yaml')"
+  "import neurodic; neurodic.ndef_dic('config/ndef_multi.yaml')"
 ```
 
 The solver consumes every reference-surface point as one global continuous
@@ -179,7 +179,7 @@ For a new case that already has calibration and ROI masks:
 $ND_ENV/bin/python -u - <<'PY'
 import neurodic
 
-config = "config/ndef_multiview.yaml"
+config = "config/ndef_multi.yaml"
 neurodic.pretrain_ndef_surface(config)       # skip when the accepted surface NPZ exists
 neurodic.ndef_sparse_precalculation(config)
 neurodic.ndef_dic(config)
@@ -192,7 +192,7 @@ For the current CylinderDIC case, whose surface NPZ already exists, run only:
 $ND_ENV/bin/python -u - <<'PY'
 import neurodic
 
-config = "config/ndef_multiview.yaml"
+config = "config/ndef_multi.yaml"
 neurodic.ndef_sparse_precalculation(config)
 neurodic.ndef_dic(config)
 PY
@@ -252,10 +252,10 @@ reconstructed independently into `X0`, `Xk` and `dX`.
 
 ```bash
 $ND_ENV/bin/python -u -c \
-  "import neurodic; neurodic.pin_multi_slover_dic('config/pin_multi_slover.yaml')"
+  "import neurodic; neurodic.pin_multi_slover_dic('config/pin_multi.yaml')"
 ```
 
-The example configuration is [`config/pin_multi_slover.yaml`](config/pin_multi_slover.yaml);
+The example configuration is [`config/pin_multi.yaml`](config/pin_multi.yaml);
 its CylinderDIC case root is `case/Multi/CylinderDIC`. Camera pairs are selected
 with `camera_pairs.selection: auto_spatial_neighbors` (neighbor topology from
 the calibration `camera_pairs.json`, closed ring with `wrap: true`). Outputs:

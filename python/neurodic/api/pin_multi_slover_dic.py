@@ -151,7 +151,7 @@ def _pin_2d_config(values: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def pin_multi_slover_dic(
-    config: str | Path | Mapping[str, Any] = "config/pin_multi_slover.yaml",
+    config: str | Path | Mapping[str, Any] = "config/pin_multi.yaml",
     *,
     write_case_artifacts: bool = True,
     max_pairs: int | None = None,
