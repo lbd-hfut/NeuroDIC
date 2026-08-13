@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neurodic.local/schemas/agent/v1/common.schema.json",
+  "title": "NeuroDIC Agent v1 common definitions",
+  "type": "object",
+  "$defs": {
+    "agent_version": {"const": "neurodic.agent/v1"},
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "availability": {"enum": ["observed", "derived", "not_available", "not_applicable", "corrupt"]},
+    "identity": {
+      "type": "object",
+      "required": ["schema_version", "algorithm", "digest", "strength", "basis"],
+      "properties": {
+        "schema_version": {"$ref": "#/$defs/agent_version"},
+        "algorithm": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "minLength": 1},
+        "strength": {"enum": ["content", "metadata", "unknown"]},
+        "basis": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["schema_version", "reuse_supported", "cache_supported", "resume_supported"],
+      "properties": {
+        "schema_version": {"$ref": "#/$defs/agent_version"},
+        "reuse_supported": {"type": "boolean"},
+        "cache_supported": {"type": "boolean"},
+        "resume_supported": {"type": "boolean"},
+        "notes": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "recoverable", "details"],
+      "properties": {
+        "code": {"enum": ["SCHEMA.INVALID", "FILESYSTEM.NOT_FOUND", "FILESYSTEM.OUTSIDE_ROOT", "FILESYSTEM.INVALID_PATH", "ARTIFACT.INVALID", "STATE.INVALID", "STATE.INVALID_TRANSITION", "CAPABILITY.UNSUPPORTED", "INTERNAL.ERROR"]},
+        "message": {"type": "string", "minLength": 1},
+        "recoverable": {"type": "boolean"},
+        "stage": {"type": "string"},
+        "path": {"type": "string"},
+        "details": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

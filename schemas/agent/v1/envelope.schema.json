@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neurodic.local/schemas/agent/v1/envelope.schema.json",
+  "title": "NeuroDIC Agent v1 envelope",
+  "type": "object",
+  "required": ["schema_version", "status", "operation", "request_id", "data", "warnings", "errors"],
+  "properties": {
+    "schema_version": {"const": "neurodic.agent/v1"},
+    "status": {"enum": ["ok", "warning", "error"]},
+    "operation": {"type": "string", "minLength": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "data": {"type": "object"},
+    "warnings": {"type": "array", "items": {"type": "object"}},
+    "errors": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/error"}}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "error"}}}, "then": {"properties": {"errors": {"minItems": 1}}}},
+    {"if": {"properties": {"status": {"enum": ["ok", "warning"]}}}, "then": {"properties": {"errors": {"maxItems": 0}}}}
+  ],
+  "additionalProperties": false
+}

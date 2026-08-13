@@ -50,7 +50,7 @@ void NDeFProblem::validate() const {
         random_seed < 0 || photometric_iterations < 0 || photometric_sample_count < 0 ||
         photometric_learning_rate <= 0.0 || weight_decay < 0.0 || smoothness_weight < 0.0 || patch_radius < 0 ||
         min_valid_patch_ratio <= 0.0 || min_valid_patch_ratio > 1.0 || invalid_patch_penalty < 0.0 ||
-        sfm_to_world_scale <= 0.0)
+        sfm_to_world_scale <= 0.0 || evaluation_sample_count < 1 || evaluation_seed < 0)
         throw ValidationError("NDeF training options are invalid");
 }
 

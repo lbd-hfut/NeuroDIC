@@ -1,0 +1,43 @@
+schema_version: neurodic.comparison_profile/v1
+profile_id: default
+version: 1
+default_tolerance: {atol: 1.0e-12, rtol: 1.0e-9}
+solvers:
+  pin:
+    required_metrics: [field.displacement.finite_ratio, evaluation.photometric_residual.mean, evaluation.valid_ratio]
+    hard_findings: [FIELD.NONFINITE]
+    metrics:
+      field.displacement.finite_ratio: {direction: higher_is_better, role: guardrail}
+      evaluation.photometric_residual.mean: {direction: lower_is_better, role: primary, fixed_evaluation: true}
+      evaluation.valid_ratio: {direction: higher_is_better, role: guardrail, fixed_evaluation: true}
+      training.loss.final: {direction: lower_is_better, role: evidence_only}
+  pin_stereo:
+    required_metrics: [reconstruction.valid_ratio, reconstruction.reprojection.p95, stereo.evaluation.photometric_residual.mean]
+    hard_findings: [RECONSTRUCTION.NO_VALID_POINTS, FIELD.NONFINITE]
+    metrics:
+      reconstruction.valid_ratio: {direction: higher_is_better, role: guardrail}
+      reconstruction.reprojection.p95: {direction: lower_is_better, role: primary}
+      stereo.evaluation.photometric_residual.mean: {direction: lower_is_better, role: primary, fixed_evaluation: true}
+      evaluation.photometric_residual.mean: {direction: lower_is_better, role: evidence_only, fixed_evaluation: true}
+  pin_multi:
+    required_metrics: [pin_multi.pair.valid_ratio]
+    hard_findings: [PIN_MULTI.NO_VALID_PAIR_POINTS, FIELD.NONFINITE]
+    metrics:
+      pin_multi.pair.valid_ratio: {direction: higher_is_better, role: guardrail}
+      pin_multi.pair.reprojection.p95: {direction: lower_is_better, role: primary}
+      fusion.selected_points: {direction: neutral, role: evidence_only}
+      fusion.preselection.overlap_group_count: {direction: neutral, role: evidence_only}
+      fusion.preselection.displacement_disagreement_p95: {direction: lower_is_better, role: evidence_only}
+  ndef:
+    required_metrics: [precalculation.track_ratio, training.valid_pair_ratio.final, field.displacement.finite_ratio, evaluation.photometric_residual.mean, evaluation.valid_ratio]
+    hard_findings: [PRECALC.NO_VALID_TRACKS, TRAINING.NO_VALID_OBSERVATIONS, FIELD.NONFINITE]
+    metrics:
+      precalculation.track_ratio: {direction: higher_is_better, role: guardrail}
+      training.valid_pair_ratio.final: {direction: higher_is_better, role: guardrail}
+      field.displacement.finite_ratio: {direction: higher_is_better, role: guardrail}
+      evaluation.photometric_residual.mean: {direction: lower_is_better, role: primary, fixed_evaluation: true}
+      evaluation.valid_ratio: {direction: higher_is_better, role: guardrail, fixed_evaluation: true}
+      evaluation.current_projection.positive_depth_ratio: {direction: higher_is_better, role: guardrail, fixed_evaluation: true}
+      evaluation.current_projection.in_bounds_ratio: {direction: higher_is_better, role: guardrail, fixed_evaluation: true}
+      evaluation.view_residual.p95: {direction: lower_is_better, role: evidence_only, fixed_evaluation: true}
+      evaluation.cross_view.residual_spread_p95: {direction: lower_is_better, role: evidence_only, fixed_evaluation: true}

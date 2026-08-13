@@ -41,6 +41,26 @@ void test_pin_solver() {
     assert(result.displacement.coordinates.sizes() == torch::IntArrayRef({256, 2}));
     assert(result.displacement.values.sizes() == torch::IntArrayRef({256, 2}));
 
+    // Fixed evaluation is post-training and uses a local stable sampler: it
+    // must not perturb model initialization or optimizer observations.
+    problem.evaluation_enabled = false;
+    torch::manual_seed(19);
+    auto without_evaluation = neurodic::PINSolver().solve(problem);
+    problem.evaluation_enabled = true;
+    problem.evaluation_sample_count = 17;
+    problem.evaluation_seed = 97;
+    torch::manual_seed(19);
+    auto with_evaluation = neurodic::PINSolver().solve(problem);
+    assert(torch::allclose(without_evaluation.displacement.values, with_evaluation.displacement.values));
+    assert(torch::allclose(without_evaluation.training_history, with_evaluation.training_history));
+    assert(with_evaluation.training_history.size(1) == 3);
+    assert(with_evaluation.evaluation_indices.numel() == 17);
+    assert(with_evaluation.evaluation_valid_count == 17);
+    torch::manual_seed(19);
+    auto repeated_evaluation = neurodic::PINSolver().solve(problem);
+    assert(torch::equal(with_evaluation.evaluation_indices, repeated_evaluation.evaluation_indices));
+    assert(torch::allclose(with_evaluation.evaluation_residuals, repeated_evaluation.evaluation_residuals));
+
     auto selective_uv = torch::tensor({{-10.F, 0.F}, {10.F, 0.F}, {-8.F, 0.F}, {8.F, 0.F}});
     neurodic::PINProblem selective_problem(reference, reference.clone(), mask,
         neurodic::SeedSet::from_tensors(seed_positions, selective_uv));

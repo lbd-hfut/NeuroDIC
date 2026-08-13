@@ -57,4 +57,24 @@ void test_ndef_solver() {
     assert(!result.model_parameter_names.empty());
     assert(result.model_state.size() == result.model_parameter_names.size());
     assert(result.last_model_state.size() == result.model_parameter_names.size());
+
+    problem.evaluation_enabled = false;
+    auto without_evaluation = NDeFSolver().solve(problem);
+    problem.evaluation_enabled = true;
+    problem.evaluation_sample_count = 3;
+    problem.evaluation_seed = 97;
+    auto with_evaluation = NDeFSolver().solve(problem);
+    assert(torch::allclose(without_evaluation.deformation.values, with_evaluation.deformation.values));
+    assert(torch::allclose(without_evaluation.training_history, with_evaluation.training_history));
+    assert(with_evaluation.evaluation_indices.numel() == 3);
+    assert(with_evaluation.evaluation_supervised_count > 0);
+    auto repeated_evaluation = NDeFSolver().solve(problem);
+    assert(torch::equal(with_evaluation.evaluation_indices, repeated_evaluation.evaluation_indices));
+    assert(std::abs(with_evaluation.evaluation_residual - repeated_evaluation.evaluation_residual) < 1e-7);
+    assert(with_evaluation.evaluation_observation_surface_indices.numel() == 6);
+    assert(with_evaluation.evaluation_observation_camera_ids.numel() == 6);
+    assert(with_evaluation.evaluation_observation_valid.all().item<bool>());
+    assert(with_evaluation.evaluation_observation_positive_depth.all().item<bool>());
+    assert(with_evaluation.evaluation_observation_in_bounds.all().item<bool>());
+    assert(with_evaluation.evaluation_observation_patch_valid.all().item<bool>());
 }

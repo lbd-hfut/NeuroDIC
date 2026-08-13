@@ -26,6 +26,14 @@ environment paths, Python ABI selection, and known dependency limitations.
 - Always pass `-DPython_EXECUTABLE=/home/a306/miniconda3/envs/neurodic/bin/python`
   when configuring CMake with Python bindings.
 
+## Canonical Agent Workflow
+
+For controlled scientific workflows, start at
+[`skills/neurodic/SKILL.md`](skills/neurodic/SKILL.md). Use the documented
+NeuroDIC control-plane CLI rather than bypassing it with internal APIs, and do
+not directly modify protected baseline scientific configuration during normal
+trial workflows.
+
 ## GPU / Sandbox Rule
 
 Normal sandboxed commands may fail to contact the NVIDIA driver:

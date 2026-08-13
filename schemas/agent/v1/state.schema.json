@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neurodic.local/schemas/agent/v1/state.schema.json",
+  "title": "NeuroDIC Agent v1 run, trial, and stage records",
+  "oneOf": [
+    {"$ref": "#/$defs/run"}, {"$ref": "#/$defs/trial"}, {"$ref": "#/$defs/stage"}
+  ],
+  "$defs": {
+    "run": {"type": "object", "required": ["schema_version", "run_id", "solver", "case_identity", "case_root", "scope", "evaluation_policy", "created_at", "capabilities"], "properties": {"schema_version": {"const": "neurodic.agent/v1"}, "run_id": {"type": "string", "minLength": 1}, "solver": {"type": "string", "minLength": 1}, "case_identity": {"type": "string", "minLength": 1}, "case_root": {"type": "string", "minLength": 1}, "scope": {"type": "object"}, "evaluation_policy": {"type": "object"}, "created_at": {"type": "string", "format": "date-time", "pattern": "Z$"}, "capabilities": {"$ref": "common.schema.json#/$defs/capabilities"}}, "additionalProperties": false},
+    "trial": {"type": "object", "required": ["schema_version", "trial_id", "run_id", "parent_trial_id", "effective_config_identity", "seed_policy", "stages", "created_at"], "properties": {"schema_version": {"const": "neurodic.agent/v1"}, "trial_id": {"type": "string", "minLength": 1}, "run_id": {"type": "string", "minLength": 1}, "parent_trial_id": {"type": ["string", "null"]}, "effective_config_identity": {"type": "string", "minLength": 1}, "seed_policy": {"type": "object"}, "stages": {"type": "array", "items": {"type": "string"}}, "created_at": {"type": "string", "format": "date-time", "pattern": "Z$"}}, "additionalProperties": false},
+    "stage": {"type": "object", "required": ["schema_version", "stage_attempt_id", "stage_id", "status", "attempt", "producer_version", "started_at", "finished_at", "artifacts", "capabilities"], "properties": {"schema_version": {"const": "neurodic.agent/v1"}, "stage_attempt_id": {"type": "string", "minLength": 1}, "stage_id": {"type": "string", "minLength": 1}, "status": {"enum": ["pending", "running", "completed", "failed", "interrupted"]}, "attempt": {"type": "integer", "minimum": 1}, "producer_version": {"type": "string", "minLength": 1}, "started_at": {"type": ["string", "null"], "format": "date-time"}, "finished_at": {"type": ["string", "null"], "format": "date-time"}, "artifacts": {"type": "array", "items": {"type": "string"}}, "capabilities": {"$ref": "common.schema.json#/$defs/capabilities"}}, "additionalProperties": false}
+  }
+}

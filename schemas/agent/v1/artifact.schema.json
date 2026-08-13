@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neurodic.local/schemas/agent/v1/artifact.schema.json",
+  "title": "NeuroDIC Agent v1 artifact record",
+  "type": "object",
+  "required": ["schema_version", "artifact_id", "artifact_type", "artifact_schema", "producer_stage", "identity", "location", "size_bytes", "compatibility"],
+  "properties": {
+    "schema_version": {"const": "neurodic.agent/v1"},
+    "artifact_id": {"type": "string", "minLength": 1},
+    "artifact_type": {"type": "string", "minLength": 1},
+    "artifact_schema": {"type": "string", "minLength": 1},
+    "producer_stage": {"type": "string", "minLength": 1},
+    "identity": {"$ref": "common.schema.json#/$defs/identity"},
+    "location": {"type": "string", "minLength": 1},
+    "size_bytes": {"type": "integer", "minimum": 0},
+    "compatibility": {"type": "object"}
+  },
+  "additionalProperties": false
+}

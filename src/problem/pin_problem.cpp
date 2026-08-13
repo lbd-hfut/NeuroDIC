@@ -29,7 +29,8 @@ void PINProblem::validate() const {
     if (seeds.seed_pos.size(0) == 0) throw ValidationError("PINProblem requires at least one cleaned seed");
     if (seed_iterations < 0 || seed_pretrain_uv_scale_threshold < 0.0 || photometric_iterations < 0 || photometric_sample_count < 1 ||
         znssd_kernel_size < 1 || znssd_kernel_size % 2 == 0 ||
-        seed_learning_rate <= 0.0 || photometric_learning_rate <= 0.0)
+        seed_learning_rate <= 0.0 || photometric_learning_rate <= 0.0 ||
+        evaluation_sample_count < 1 || evaluation_seed < 0 || evaluation_patch_radius < 0)
         throw ValidationError("PIN training options must be nonnegative (iterations may be zero)");
     precompute.reference_coefficients.validate();
     precompute.deformed_coefficients.validate();

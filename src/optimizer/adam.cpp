@@ -19,6 +19,7 @@ OptimizationResult AdamOptimizer::minimize(int iterations, const LossClosure& cl
         loss.backward();
         optimizer_.step();
         result.final_loss = loss.detach().item<double>();
+        result.losses.push_back(result.final_loss);
         ++result.iterations;
     }
     return result;

@@ -39,6 +39,10 @@ void bind_problem(py::module_& module) {
         .def_readwrite("photometric_learning_rate", &neurodic::PINProblem::photometric_learning_rate)
         .def_readwrite("photometric_loss", &neurodic::PINProblem::photometric_loss)
         .def_readwrite("compute_neural_strain_2d", &neurodic::PINProblem::compute_neural_strain_2d)
+        .def_readwrite("evaluation_enabled", &neurodic::PINProblem::evaluation_enabled)
+        .def_readwrite("evaluation_sample_count", &neurodic::PINProblem::evaluation_sample_count)
+        .def_readwrite("evaluation_seed", &neurodic::PINProblem::evaluation_seed)
+        .def_readwrite("evaluation_patch_radius", &neurodic::PINProblem::evaluation_patch_radius)
         .def("set_device", [](neurodic::PINProblem& problem, const std::string& device) {
             problem.device = torch::Device(device);
         })
@@ -110,6 +114,9 @@ void bind_problem(py::module_& module) {
         .def_readwrite("invalid_patch_penalty", &neurodic::NDeFProblem::invalid_patch_penalty)
         .def_readwrite("sfm_to_world_scale", &neurodic::NDeFProblem::sfm_to_world_scale)
         .def_readwrite("photometric_loss", &neurodic::NDeFProblem::photometric_loss)
+        .def_readwrite("evaluation_enabled", &neurodic::NDeFProblem::evaluation_enabled)
+        .def_readwrite("evaluation_sample_count", &neurodic::NDeFProblem::evaluation_sample_count)
+        .def_readwrite("evaluation_seed", &neurodic::NDeFProblem::evaluation_seed)
         .def("set_device", [](neurodic::NDeFProblem& problem, const std::string& device) {
             problem.device = torch::Device(device);
         })

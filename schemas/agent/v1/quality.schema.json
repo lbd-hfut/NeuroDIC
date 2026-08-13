@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neurodic.local/schemas/agent/v1/quality.schema.json",
+  "title": "NeuroDIC Quality v1 foundation record",
+  "type": "object",
+  "required": ["schema_version", "solver", "scope", "status", "metrics", "threshold_results", "findings", "failure_stage", "eligibility", "profile"],
+  "properties": {
+    "schema_version": {"const": "neurodic.quality/v1"},
+    "solver": {"type": "string", "minLength": 1},
+    "scope": {"type": "object"},
+    "status": {"enum": ["unknown", "pass", "warning", "fail"]},
+    "metrics": {"type": "array", "items": {"type": "object", "required": ["id", "value", "unit", "availability", "source", "scope", "aggregation", "sample_count", "notes"], "properties": {"id": {"type": "string"}, "value": {"type": ["number", "integer", "null"]}, "unit": {"type": "string"}, "availability": {"enum": ["observed", "derived", "not_available", "not_applicable", "corrupt"]}, "source": {"type": "object"}, "scope": {"type": "object"}, "aggregation": {"type": ["string", "null"]}, "sample_count": {"type": ["integer", "null"]}, "notes": {"type": ["string", "null"]}}, "additionalProperties": false}},
+    "threshold_results": {"type": "array", "items": {"type": "object"}},
+    "findings": {"type": "array", "items": {"type": "object"}},
+    "failure_stage": {"type": ["string", "null"]},
+    "eligibility": {"type": "object"},
+    "profile": {"type": ["object", "null"]}
+  },
+  "additionalProperties": false
+}

@@ -68,6 +68,9 @@ public:
     double invalid_patch_penalty{0.05};
     double sfm_to_world_scale{1.0};
     PhotometricLossType photometric_loss{PhotometricLossType::ZNSSD};
+    bool evaluation_enabled{false};
+    int evaluation_sample_count{1024};
+    int64_t evaluation_seed{104729};
     torch::Device device{torch::kCPU};
 };
 

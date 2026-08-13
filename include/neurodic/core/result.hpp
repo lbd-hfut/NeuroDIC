@@ -13,6 +13,7 @@
 #pragma once
 
 #include <map>
+#include <limits>
 #include <string>
 #include <vector>
 #include <torch/torch.h>
@@ -37,6 +38,18 @@ struct PINResult {
     FieldResult displacement;
     FieldResult strain;  // Green--Lagrange: [E_xx, E_yy, E_xy]
     SolverDiagnostics diagnostics;
+    // [step, 3]: phase (0=seed_mse, 1=photometric), phase-local step, loss.
+    torch::Tensor training_history;
+    // Bounded, deterministic post-training photometric observations.  These
+    // never participate in an optimizer update.
+    torch::Tensor evaluation_indices;    // CPU int64 [requested]
+    torch::Tensor evaluation_residuals;  // CPU float64 [requested], NaN if invalid
+    int64_t evaluation_requested_count{0};
+    int64_t evaluation_valid_count{0};
+    int64_t evaluation_eligible_count{0};
+    int64_t evaluation_seed{0};
+    int evaluation_patch_radius{0};
+    std::string evaluation_loss_type;
 };
 
 struct PINStereoResult {
@@ -82,6 +95,21 @@ struct NDeFResult {
     // [steps,8]: epoch, step, total, photo, smoothness, valid pairs,
     // supervised pairs, displacement RMS.
     torch::Tensor training_history;
+    torch::Tensor evaluation_indices;  // CPU int64 fixed surface-point indices
+    // Observation rows [M] over evaluation_indices x reference-visible cameras.
+    torch::Tensor evaluation_observation_surface_indices;
+    torch::Tensor evaluation_observation_camera_ids;
+    torch::Tensor evaluation_observation_residuals;  // NaN when not current-valid
+    torch::Tensor evaluation_observation_reference_visible;
+    torch::Tensor evaluation_observation_positive_depth;
+    torch::Tensor evaluation_observation_in_bounds;
+    torch::Tensor evaluation_observation_patch_valid;
+    torch::Tensor evaluation_observation_valid;
+    int64_t evaluation_requested_count{0};
+    int64_t evaluation_valid_count{0};
+    int64_t evaluation_supervised_count{0};
+    int64_t evaluation_seed{0};
+    double evaluation_residual{std::numeric_limits<double>::quiet_NaN()};
     torch::Tensor training_sample_counts; // CPU int64 [N]
     torch::Tensor coordinate_center;       // CPU float32 [3]
     torch::Tensor coordinate_scale;        // CPU float32 [3]

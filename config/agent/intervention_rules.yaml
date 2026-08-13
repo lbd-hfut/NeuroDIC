@@ -1,0 +1,23 @@
+schema_version: neurodic.intervention_rules/v1
+rule_set_id: neurodic-default-intervention-rules
+version: 1
+rules:
+  - rule_id: ndef.deformation.numeric_step_reduction
+    version: 1
+    priority: 10
+    solver: ndef
+    applicable_failure_families: [TRAINING.NUMERICAL_FAILURE]
+    applicable_candidate_causes: [OPTIMIZATION.STEP_INSTABILITY]
+    minimum_support: strong
+    allows_moderate: false
+    required_evidence: [training.history.finite_ratio, training.valid_pair_ratio.final]
+    contradicting_evidence: [training.history.stable]
+    parameter_changes: [{path: deformation_training.photometric_learning_rate, policy: multiply, factor: 0.5}]
+    coupling_policy: single
+    stage_ownership: ndef.deformation.train
+    expected_mechanism: "Reduce deformation optimizer step magnitude."
+    risk_class: low
+    evidence_level: reviewed_mechanistic
+    stop_conditions: [current_value_at_auto_safe_min, required_evidence_missing, contradiction_present, planner_blocked]
+    source_rationale: "The configuration exposes this AdamW photometric step size and the diagnosed nonfinite training history directly concerns numerical optimization stability."
+    notes: "A bounded intervention hypothesis; not an outcome guarantee."

@@ -1,7 +1,9 @@
 #include "neurodic/solver/pin_solver.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
+#include <numeric>
 
 #include "neurodic/core/exceptions.hpp"
 #include "neurodic/interpolation/torch_bspline.hpp"
@@ -13,6 +15,32 @@
 #include "neurodic/representation/pin_displacement_field.hpp"
 
 namespace neurodic {
+namespace {
+
+uint64_t splitmix64(uint64_t value) {
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31);
+}
+
+torch::Tensor fixed_indices(int64_t population, int requested, int64_t seed) {
+    const auto count = std::min<int64_t>(population, requested);
+    std::vector<int64_t> order(static_cast<size_t>(population));
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [seed](int64_t left, int64_t right) {
+        return splitmix64(static_cast<uint64_t>(left) ^ static_cast<uint64_t>(seed)) <
+               splitmix64(static_cast<uint64_t>(right) ^ static_cast<uint64_t>(seed));
+    });
+    order.resize(static_cast<size_t>(count));
+    return torch::tensor(order, torch::TensorOptions().dtype(torch::kLong));
+}
+
+const char* loss_name(PhotometricLossType type) {
+    return type == PhotometricLossType::SSD ? "ssd" : "znssd";
+}
+
+}  // namespace
 
 PINResult PINSolver::solve(const PINProblem& problem) const {
     problem.validate();
@@ -52,6 +80,7 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
     double final_loss = 0.0;
     int iterations = 0;
     PINResult result;
+    std::vector<double> history;
     const auto seed_scales = problem.seeds.scale_uv.slice(0, 2, 4);
     const auto active_seed_components = torch::nonzero(
         seed_scales > problem.seed_pretrain_uv_scale_threshold).reshape({-1}).to(device, torch::kLong);
@@ -64,6 +93,8 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
         });
         final_loss = run.final_loss;
         iterations += run.iterations;
+        for (size_t step = 0; step < run.losses.size(); ++step)
+            history.insert(history.end(), {0.0, static_cast<double>(step + 1), run.losses[step]});
     }
 
     auto all_xy = torch::stack({roi_indices.select(1, 1), roi_indices.select(1, 0)}, 1).to(device, dtype);
@@ -123,6 +154,8 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
         }
         final_loss = run.final_loss;
         iterations += run.iterations;
+        for (size_t step = 0; step < run.losses.size(); ++step)
+            history.insert(history.end(), {1.0, static_cast<double>(step + 1), run.losses[step]});
     }
     model->eval();
     // The network takes normalized pixel coordinates and returns normalized
@@ -134,6 +167,42 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
     auto values = decode(all_xy).detach().to(torch::kCPU);
     result.displacement = {all_xy.detach().to(torch::kCPU), values};
     result.strain = {all_xy.detach().to(torch::kCPU), strain.to(torch::kCPU)};
+    result.training_history = history.empty() ? torch::empty({0, 3}, torch::kFloat64) :
+        torch::from_blob(history.data(), {static_cast<int64_t>(history.size() / 3), 3}, torch::kFloat64).clone();
+    if (problem.evaluation_enabled) {
+        const int radius = problem.evaluation_patch_radius > 0 ? problem.evaluation_patch_radius : problem.znssd_kernel_size / 2;
+        const int side = 2 * radius + 1;
+        auto selected_cpu = fixed_indices(all_xy.size(0), problem.evaluation_sample_count, problem.evaluation_seed);
+        auto selected = selected_cpu.to(device);
+        auto centers = all_xy.index_select(0, selected);
+        auto options = torch::TensorOptions().device(device).dtype(dtype);
+        auto axis = torch::arange(-radius, radius + 1, options);
+        auto offsets = torch::stack({axis.repeat({side}), axis.repeat_interleave(side)}, 1);
+        auto window_xy = centers.unsqueeze(1) + offsets.unsqueeze(0);
+        auto x = window_xy.select(2, 0), y = window_xy.select(2, 1);
+        auto inside = (x >= 0) & (x < width) & (y >= 0) & (y < height);
+        auto roi_device = problem.roi_mask.to(device);
+        auto mask = inside & roi_device.index({y.clamp(0, height - 1).to(torch::kLong), x.clamp(0, width - 1).to(torch::kLong)});
+        auto flat_xy = window_xy.reshape({-1, 2});
+        auto padded_xy = problem.precompute.original_to_padded(flat_xy);
+        auto reference = sampler.evaluate(reference_coefficients, padded_xy).reshape({centers.size(0), -1});
+        auto warped = sampler.evaluate(deformed_coefficients, padded_xy + decode(flat_xy)).reshape({centers.size(0), -1});
+        std::vector<double> residuals;
+        residuals.reserve(static_cast<size_t>(centers.size(0)));
+        PhotometricLoss evaluation_loss(PhotometricLossOptions{problem.photometric_loss, ZNSSDLossOptions{1e-6, side}});
+        for (int64_t sample = 0; sample < centers.size(0); ++sample) {
+            auto value = evaluation_loss.compute_windows(reference.slice(0, sample, sample + 1), warped.slice(0, sample, sample + 1), mask.slice(0, sample, sample + 1)).item<double>();
+            residuals.push_back(std::isfinite(value) ? value : std::numeric_limits<double>::quiet_NaN());
+        }
+        result.evaluation_indices = selected_cpu;
+        result.evaluation_residuals = torch::tensor(residuals, torch::TensorOptions().dtype(torch::kFloat64));
+        result.evaluation_requested_count = static_cast<int64_t>(residuals.size());
+        result.evaluation_valid_count = static_cast<int64_t>(std::count_if(residuals.begin(), residuals.end(), [](double item) { return std::isfinite(item); }));
+        result.evaluation_eligible_count = all_xy.size(0);
+        result.evaluation_seed = problem.evaluation_seed;
+        result.evaluation_patch_radius = radius;
+        result.evaluation_loss_type = loss_name(problem.photometric_loss);
+    }
     result.diagnostics.status = SolverStatus::CONVERGED;
     result.diagnostics.iterations = iterations;
     result.diagnostics.final_loss = final_loss;

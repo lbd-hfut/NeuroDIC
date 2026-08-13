@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -173,7 +174,7 @@ def _save(result, result_root: Path, visualization_root: Path, surface_payload: 
                        "valid_pairs", "supervised_pairs", "displacement_rms"]
     history = result.training_history.numpy()
     np.savez_compressed(diagnostics / "training.npz", history=history,
-                        history_columns=np.asarray(history_columns),
+                        schema_version=np.asarray("neurodic.ndef.training/v1"), history_columns=np.asarray(history_columns),
                         sample_counts=result.training_sample_counts.numpy(),
                         coordinate_center=result.coordinate_center.numpy(),
                         coordinate_scale=result.coordinate_scale.numpy(),
@@ -183,6 +184,60 @@ def _save(result, result_root: Path, visualization_root: Path, surface_payload: 
                         random_seed=np.asarray(result.random_seed), output_scale=np.asarray(result.output_scale))
     history_json = [dict(zip(history_columns, map(float, row))) for row in history]
     (diagnostics / "training_history.json").write_text(json.dumps(history_json, indent=2), encoding="utf-8")
+    if result.evaluation_requested_count:
+        residual = float(result.evaluation_residual)
+        digest = hashlib.sha256()
+        for item in (result.reference_surface_sfm.numpy(), surface_payload.get("visibility_mask"),
+                     surface_payload.get("projected_uv"), np.asarray(camera_names)):
+            if item is not None:
+                array = np.ascontiguousarray(item); digest.update(str(array.shape).encode()); digest.update(array.tobytes())
+        summary = {"schema_version": "neurodic.fixed_evaluation/v1", "solver": "ndef",
+                   "evaluation_set": {"identity": f"ndef-v1:{digest.hexdigest()}:{result.evaluation_seed}:{result.evaluation_requested_count}",
+                                      "seed": result.evaluation_seed, "sampling": "stable_hash_ranked_surface_indices",
+                                      "requested_count": result.evaluation_requested_count,
+                                      "surface_point_count": int(len(reference)), "view_policy": "all_reference_visible_camera_observations"},
+                   "loss": {"type": "photometric_training_family", "aggregation": "visible_count_weighted_mean_per_valid_pair", "unit": "photometric_objective"},
+                   "valid_count": result.evaluation_valid_count, "supervised_count": result.evaluation_supervised_count,
+                   "valid_ratio": result.evaluation_valid_count / result.evaluation_supervised_count if result.evaluation_supervised_count else 0.0,
+                   "summary": {"mean": residual if np.isfinite(residual) else None}}
+        observation = {
+            "observation_surface_indices": result.evaluation_observation_surface_indices.numpy(),
+            "observation_camera_ids": result.evaluation_observation_camera_ids.numpy(),
+            "observation_residuals": result.evaluation_observation_residuals.numpy(),
+            "observation_reference_visible": result.evaluation_observation_reference_visible.numpy(),
+            "observation_positive_depth": result.evaluation_observation_positive_depth.numpy(),
+            "observation_in_bounds": result.evaluation_observation_in_bounds.numpy(),
+            "observation_patch_valid": result.evaluation_observation_patch_valid.numpy(),
+            "observation_valid": result.evaluation_observation_valid.numpy(),
+        }
+        valid_rows = observation["observation_valid"].astype(bool)
+        summary["observation_count"] = int(len(valid_rows))
+        summary["current_projection"] = {"positive_depth_ratio": float(observation["observation_positive_depth"].mean()) if len(valid_rows) else None,
+                                         "in_bounds_ratio": float(observation["observation_in_bounds"].mean()) if len(valid_rows) else None,
+                                         "patch_valid_ratio": float(observation["observation_patch_valid"].mean()) if len(valid_rows) else None}
+        cameras: dict[str, Any] = {}
+        for camera_id in np.unique(observation["observation_camera_ids"]):
+            rows = observation["observation_camera_ids"] == camera_id
+            good = rows & valid_rows
+            values = observation["observation_residuals"][good]
+            cameras[str(int(camera_id))] = {"requested_count": int(rows.sum()), "valid_count": int(good.sum()),
+                                             "valid_ratio": float(good.sum() / rows.sum()) if rows.any() else None,
+                                             "residual_mean": float(values.mean()) if len(values) else None,
+                                             "residual_median": float(np.median(values)) if len(values) else None,
+                                             "residual_p95": float(np.percentile(values, 95)) if len(values) else None}
+        summary["cameras"] = cameras
+        point_spread = []
+        for index in np.unique(observation["observation_surface_indices"]):
+            values = observation["observation_residuals"][(observation["observation_surface_indices"] == index) & valid_rows]
+            if len(values) >= 2: point_spread.append(float(values.max() - values.min()))
+        summary["cross_view"] = {"residual_spread_median": float(np.median(point_spread)) if point_spread else None,
+                                 "residual_spread_p95": float(np.percentile(point_spread, 95)) if point_spread else None,
+                                 "sample_count": len(point_spread)}
+        np.savez_compressed(diagnostics / "evaluation.npz", schema_version=np.asarray(summary["schema_version"]),
+                            indices=result.evaluation_indices.numpy(), residual=np.asarray(residual),
+                            requested_count=np.asarray(result.evaluation_requested_count), valid_count=np.asarray(result.evaluation_valid_count),
+                            supervised_count=np.asarray(result.evaluation_supervised_count), **observation)
+        (diagnostics / "evaluation.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     checkpoint_meta = {
         "coordinate_center": result.coordinate_center,
         "coordinate_scale": result.coordinate_scale,
@@ -420,6 +475,15 @@ def ndef_dic(config: str | Path | Mapping[str, Any] = "config/ndef_multi.yaml", 
                 "patch_radius", "min_valid_patch_ratio", "invalid_patch_penalty"):
         if key in training: setattr(problem, key, training[key])
     if "seed" in training: problem.random_seed = int(training["seed"])
+    evaluation = values.get("evaluation", {})
+    allowed_evaluation = {"enabled", "sample_count", "seed"}
+    unknown_evaluation = set(evaluation) - allowed_evaluation
+    if unknown_evaluation:
+        raise ValueError(f"Unknown NDeF evaluation settings: {sorted(unknown_evaluation)}")
+    if evaluation:
+        problem.evaluation_enabled = bool(evaluation.get("enabled", False))
+        problem.evaluation_sample_count = int(evaluation.get("sample_count", problem.evaluation_sample_count))
+        problem.evaluation_seed = int(evaluation.get("seed", problem.evaluation_seed))
     problem.bspline_degree = int(values.get("interpolation", {}).get("degree", problem.bspline_degree))
     name = str(training.get("photometric_loss", "znssd")).lower()
     problem.photometric_loss = backend.PhotometricLossType.SSD if name in {"ssd", "mse"} else backend.PhotometricLossType.ZNSSD

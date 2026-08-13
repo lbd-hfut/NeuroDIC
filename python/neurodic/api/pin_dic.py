@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 import numpy as np
 import torch
+import hashlib
 
 from ..config import load_config
 from ..case_io import planar_image_series
@@ -59,10 +60,21 @@ def _apply_training(problem, config: Mapping[str, Any]) -> None:
         raise ValueError("training.photometric_loss must be 'ssd' or 'znssd'")
     device = config.get("training", {}).get("device", "cpu")
     problem.set_device(str(device))
+    evaluation = config.get("evaluation", {})
+    allowed = {"enabled", "sample_count", "seed", "patch_radius"}
+    unknown = set(evaluation) - allowed
+    if unknown:
+        raise ValueError(f"Unknown PIN evaluation settings: {sorted(unknown)}")
+    if evaluation:
+        problem.evaluation_enabled = bool(evaluation.get("enabled", False))
+        problem.evaluation_sample_count = int(evaluation.get("sample_count", problem.evaluation_sample_count))
+        problem.evaluation_seed = int(evaluation.get("seed", problem.evaluation_seed))
+        problem.evaluation_patch_radius = int(evaluation.get("patch_radius", problem.evaluation_patch_radius))
 
 
 def _write_case_artifacts(case_root: Path, result, output_subdir: str | None, reference_image: np.ndarray,
-                          output_config: Mapping[str, Any] | None = None) -> None:
+                          output_config: Mapping[str, Any] | None = None, *, deformed_image: np.ndarray | None = None,
+                          roi_mask: np.ndarray | None = None) -> None:
     output_config = output_config or {}
     output = Path(output_config.get("result", "result/pin"))
     visual = Path(output_config.get("visualization", "visualization/pin"))
@@ -82,6 +94,31 @@ def _write_case_artifacts(case_root: Path, result, output_subdir: str | None, re
     np.savez(output / "pin_result.npz", coordinates=xy, displacement=uv, strain=strain,
              strain_components=np.asarray(["E_xx", "E_yy", "E_xy"]),
              iterations=result.diagnostics.iterations, final_loss=result.diagnostics.final_loss)
+    history = result.training_history.numpy()
+    np.savez_compressed(output / "diagnostics_training.npz", schema_version=np.asarray("neurodic.pin.training/v1"),
+                        history=history, history_columns=np.asarray(["phase", "phase_step", "loss"]),
+                        phase_names=np.asarray(["seed_mse", "photometric"]))
+    if result.evaluation_requested_count:
+        residuals = result.evaluation_residuals.numpy()
+        finite = residuals[np.isfinite(residuals)]
+        digest = hashlib.sha256()
+        for item in (reference_image, deformed_image, roi_mask):
+            if item is not None:
+                array = np.ascontiguousarray(item); digest.update(str(array.shape).encode()); digest.update(array.tobytes())
+        summary = {"schema_version": "neurodic.fixed_evaluation/v1", "solver": "pin",
+                   "evaluation_set": {"identity": f"pin-v1:{digest.hexdigest()}:{result.evaluation_seed}:{result.evaluation_patch_radius}:{result.evaluation_loss_type}",
+                                      "seed": result.evaluation_seed, "sampling": "stable_hash_ranked_roi_indices",
+                                      "eligible_count": result.evaluation_eligible_count, "requested_count": result.evaluation_requested_count},
+                   "loss": {"type": result.evaluation_loss_type, "patch_radius": result.evaluation_patch_radius,
+                            "aggregation": "mean_per_valid_window", "unit": "photometric_objective"},
+                   "valid_count": result.evaluation_valid_count,
+                   "valid_ratio": result.evaluation_valid_count / result.evaluation_requested_count,
+                   "summary": {"mean": float(finite.mean()) if len(finite) else None,
+                               "median": float(np.median(finite)) if len(finite) else None,
+                               "p95": float(np.percentile(finite, 95)) if len(finite) else None}}
+        np.savez_compressed(output / "diagnostics_evaluation.npz", schema_version=np.asarray(summary["schema_version"]),
+                            indices=result.evaluation_indices.numpy(), residual=residuals)
+        (output / "diagnostics_evaluation.json").write_text(__import__("json").dumps(summary, indent=2), encoding="utf-8")
     panels = [Field2DPanel(reference_image, xy, uv[:, index], label, label, symmetric=True)
               for index, label in enumerate(("u displacement", "v displacement"))]
     render_2d_field_grid(panels, visual / "pin_displacement.png", rows=1, columns=2, alpha=.9)
@@ -142,7 +179,8 @@ def pin_dic(reference, deformed=None, roi_mask=None, config: str | Path | Mappin
     problem = _build_problem(reference_array, deformed_array, mask_array, values, seeds)
     result = backend.PINSolver().solve(problem)
     if case_root is not None and write_case_artifacts:
-        _write_case_artifacts(case_root, result, output_subdir, reference_array, values.get("output", {}))
+        _write_case_artifacts(case_root, result, output_subdir, reference_array, values.get("output", {}),
+                              deformed_image=deformed_array, roi_mask=mask_array)
     return result
 
 

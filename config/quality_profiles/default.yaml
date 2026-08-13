@@ -1,0 +1,16 @@
+profile_id: default
+version: 1
+description: Conservative structural scientific-evidence profile; not a universal material-quality standard.
+solvers:
+  pin:
+    required_metrics: [field.displacement.finite_ratio, evaluation.photometric_residual.mean, evaluation.valid_ratio]
+    thresholds: [{metric_id: field.displacement.finite_ratio, operator: ">=", threshold: 1.0, required: true, finding: FIELD.NONFINITE, stage: pin.infer}]
+  pin_stereo:
+    required_metrics: [reconstruction.valid_ratio, reconstruction.reprojection.p95, stereo.evaluation.photometric_residual.mean]
+    thresholds: [{metric_id: reconstruction.valid_ratio, operator: ">", threshold: 0.0, required: true, finding: RECONSTRUCTION.NO_VALID_POINTS, stage: stereo.reconstruct}, {metric_id: reconstruction.reprojection.p95, operator: "<=", threshold: 5.0, required: false, finding: RECONSTRUCTION.HIGH_REPROJECTION, stage: stereo.reconstruct}]
+  pin_multi:
+    required_metrics: [pin_multi.pair.valid_ratio]
+    thresholds: [{metric_id: pin_multi.pair.valid_ratio, operator: ">", threshold: 0.0, required: true, finding: PIN_MULTI.NO_VALID_PAIR_POINTS, stage: pin_multi.pair_quality}, {metric_id: pin_multi.pair.reprojection.p95, operator: "<=", threshold: 5.0, required: false, finding: PIN_MULTI.HIGH_REPROJECTION, stage: pin_multi.pair_quality}]
+  ndef:
+    required_metrics: [precalculation.track_ratio, training.valid_pair_ratio.final, field.displacement.finite_ratio, evaluation.photometric_residual.mean, evaluation.valid_ratio]
+    thresholds: [{metric_id: precalculation.track_ratio, operator: ">", threshold: 0.0, required: true, finding: PRECALC.NO_VALID_TRACKS, stage: ndef.precalculation}, {metric_id: training.valid_pair_ratio.final, operator: ">", threshold: 0.0, required: true, finding: TRAINING.NO_VALID_OBSERVATIONS, stage: ndef.deformation}, {metric_id: field.displacement.finite_ratio, operator: ">=", threshold: 1.0, required: true, finding: FIELD.NONFINITE, stage: ndef.deformation}]

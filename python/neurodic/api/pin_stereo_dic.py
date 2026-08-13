@@ -13,6 +13,7 @@ from ..models import _require_backend
 from ..runtime import configure_runtime
 from ..case_io import stereo_image_pairs
 from .pin_dic import _build_problem, _mapping
+from ..pin_multi_quality import compute_pair_reason_codes, REASON_CODES
 
 
 def _read_gray(path: Path) -> np.ndarray:
@@ -64,7 +65,8 @@ def _save_pair_visualization(path: Path, result, title: str) -> None:
     plt.close(figure)
 
 
-def _save(result, result_root: Path, visualization_root: Path) -> None:
+def _save(result, result_root: Path, visualization_root: Path, *, roi_mask: np.ndarray | None = None,
+          image_size: tuple[int, int] | None = None, max_reprojection_error_px: float = 5.0) -> None:
     disp_dir, reconstruct_dir, deformation_dir = (result_root / name for name in ("disp", "reconstruct", "deformation"))
     vis_disp_dir, vis_reconstruct_dir, vis_deformation_dir = (
         visualization_root / name for name in ("disp", "reconstruct", "deformation"))
@@ -77,7 +79,28 @@ def _save(result, result_root: Path, visualization_root: Path) -> None:
     ):
         np.savez(disp_dir / f"{name}.npz", coordinates=field.displacement.coordinates.numpy(),
                  displacement=field.displacement.values.numpy(), iterations=field.diagnostics.iterations,
-                 final_loss=field.diagnostics.final_loss)
+                 final_loss=field.diagnostics.final_loss,
+                 training_history=field.training_history.numpy(),
+                 training_history_columns=np.asarray(["phase", "phase_step", "loss"]),
+                 training_history_schema_version=np.asarray("neurodic.pin.training/v1"))
+        if field.evaluation_requested_count:
+            residuals = field.evaluation_residuals.numpy()
+            finite = residuals[np.isfinite(residuals)]
+            evaluation = {"schema_version": "neurodic.fixed_evaluation/v1", "solver": "pin_stereo",
+                          "scope": {"field": name},
+                          "evaluation_set": {"identity": f"pin-v1:{field.evaluation_seed}:{field.evaluation_eligible_count}:{field.evaluation_patch_radius}:{field.evaluation_loss_type}",
+                                             "seed": field.evaluation_seed, "sampling": "stable_hash_ranked_roi_indices",
+                                             "eligible_count": field.evaluation_eligible_count, "requested_count": field.evaluation_requested_count},
+                          "loss": {"type": field.evaluation_loss_type, "patch_radius": field.evaluation_patch_radius,
+                                   "aggregation": "mean_per_valid_window", "unit": "photometric_objective"},
+                          "valid_count": field.evaluation_valid_count,
+                          "valid_ratio": field.evaluation_valid_count / field.evaluation_requested_count,
+                          "summary": {"mean": float(finite.mean()) if len(finite) else None,
+                                      "median": float(np.median(finite)) if len(finite) else None,
+                                      "p95": float(np.percentile(finite, 95)) if len(finite) else None}}
+            np.savez_compressed(disp_dir / f"{name}_evaluation.npz", schema_version=np.asarray(evaluation["schema_version"]),
+                                indices=field.evaluation_indices.numpy(), residual=residuals)
+            (disp_dir / f"{name}_evaluation.json").write_text(json.dumps(evaluation, indent=2), encoding="utf-8")
         _save_pair_visualization(vis_disp_dir / f"{name}.png", field, title)
     valid = result.valid.numpy().astype(bool)
     reference = result.reference_points.numpy()
@@ -93,6 +116,21 @@ def _save(result, result_root: Path, visualization_root: Path) -> None:
     np.savez(deformation_dir / "initial_to_last.npz", coordinates=result.left_reference_coordinates.numpy(),
              reference_points=reference, current_points=current, displacement=displacement, strain=strain,
              strain_components=np.asarray(["E_xx", "E_yy", "E_zz", "E_xy", "E_yz", "E_xz"]), valid=valid)
+    reason_codes, reprojection = compute_pair_reason_codes(
+        result, roi_mask, image_size=image_size, max_reprojection_error_px=max_reprojection_error_px)
+    reference_error = result.reference_reprojection_error.numpy()
+    current_error = result.current_reprojection_error.numpy()
+    geometry_dir = result_root / "diagnostics"; geometry_dir.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(geometry_dir / "stereo_geometry.npz", schema_version=np.asarray("neurodic.stereo_geometry/v1"),
+                        reason_code=reason_codes, reason_names=np.asarray([REASON_CODES[i] for i in sorted(REASON_CODES)]),
+                        valid=valid, reference_reprojection_error=reference_error,
+                        current_reprojection_error=current_error,
+                        reference_positive_depth=reference[:, 2] > 0.0, current_positive_depth=current[:, 2] > 0.0)
+    counts = {name: int((reason_codes == code).sum()) for code, name in REASON_CODES.items()}
+    (geometry_dir / "stereo_geometry.json").write_text(json.dumps({
+        "schema_version": "neurodic.stereo_geometry/v1", "reason_priority": [REASON_CODES[i] for i in sorted(REASON_CODES)],
+        "scope": {"states": ["reference", "current"], "fields": ["reference_disparity", "left_temporal", "deformed_disparity"]},
+        "counts": counts, "max_reprojection_error_px": max_reprojection_error_px}, indent=2), encoding="utf-8")
     summary = {"total_points": int(result.valid.numel()),
                "valid_points": int(result.valid.sum().item()),
                "coordinate_frame": "calibration world frame",
@@ -163,7 +201,9 @@ def pin_stereo_dic(config: str | Path | Mapping[str, Any] = "config/pin_stereo.y
         output = Path(values.get("output", {}).get("result", "result"))
         visualization = Path(values.get("output", {}).get("visualization", "visualization"))
         _save(result, output if output.is_absolute() else root / output,
-              visualization if visualization.is_absolute() else root / visualization)
+              visualization if visualization.is_absolute() else root / visualization, roi_mask=mask,
+              image_size=(l0.shape[1], l0.shape[0]),
+              max_reprojection_error_px=float(reconstruction.get("max_reprojection_error_px", 5.0)))
     return result
 
 

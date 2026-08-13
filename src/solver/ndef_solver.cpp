@@ -3,7 +3,9 @@
 #include <ATen/Context.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <numeric>
 #include <vector>
 #include <torch/cuda.h>
 #include <c10/cuda/CUDACachingAllocator.h>
@@ -20,6 +22,25 @@ namespace neurodic {
 namespace {
 
 using torch::indexing::Slice;
+
+uint64_t splitmix64(uint64_t value) {
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31);
+}
+
+torch::Tensor fixed_indices(int64_t population, int requested, int64_t seed) {
+    const auto count = std::min<int64_t>(population, requested);
+    std::vector<int64_t> order(static_cast<size_t>(population));
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [seed](int64_t left, int64_t right) {
+        return splitmix64(static_cast<uint64_t>(left) ^ static_cast<uint64_t>(seed)) <
+               splitmix64(static_cast<uint64_t>(right) ^ static_cast<uint64_t>(seed));
+    });
+    order.resize(static_cast<size_t>(count));
+    return torch::tensor(order, torch::TensorOptions().dtype(torch::kLong));
+}
 
 torch::Tensor patch_offsets(int radius, const torch::TensorOptions& options) {
     auto axis = torch::arange(-radius, radius + 1, options);
@@ -91,6 +112,10 @@ struct TrainingObjective {
     double supervised_pairs{0.0};
 };
 
+struct EvaluationObservations {
+    torch::Tensor surface_indices, camera_ids, residuals, reference_visible, positive_depth, in_bounds, patch_valid, valid;
+};
+
 TrainingObjective objective(NDeFInternalModel& model, const NDeFProblem& problem,
                             NDeFGeometry& geometry, const torch::Tensor& reference_surface,
                             const torch::Tensor& reference_uv, const torch::Tensor& visibility,
@@ -139,6 +164,49 @@ TrainingObjective objective(NDeFInternalModel& model, const NDeFProblem& problem
     return {photo + problem.smoothness_weight * smooth, photo.detach(), smooth.detach(),
             displacement.square().sum(1).mean().sqrt().detach(),
             current_valid.sum().item<double>(), static_cast<double>(point_ids.numel())};
+}
+
+EvaluationObservations evaluation_observations(NDeFInternalModel& model, const NDeFProblem& problem,
+                                                NDeFGeometry& geometry, const torch::Tensor& reference_surface,
+                                                const torch::Tensor& reference_uv, const torch::Tensor& visibility,
+                                                const torch::Tensor& indices, const torch::Tensor& reference_images,
+                                                const torch::Tensor& current_images, const torch::Tensor& image_sizes) {
+    auto points = reference_surface.index_select(0, indices);
+    auto visible = visibility.index_select(0, indices);
+    auto ids = torch::nonzero(visible);
+    auto options = torch::TensorOptions().device(points.device()).dtype(torch::kLong);
+    if (ids.numel() == 0) {
+        auto empty = torch::empty({0}, options);
+        auto bool_options = torch::TensorOptions().device(points.device()).dtype(torch::kBool);
+        return {empty, empty, torch::empty({0}, points.options()), torch::empty({0}, bool_options),
+                torch::empty({0}, bool_options), torch::empty({0}, bool_options),
+                torch::empty({0}, bool_options), torch::empty({0}, bool_options)};
+    }
+    auto local_ids = ids.select(1, 0), cameras = ids.select(1, 1);
+    auto global_ids = indices.index_select(0, local_ids);
+    auto current = geometry.project_reference_surface(points + model.forward(points));
+    auto ref_uv = reference_uv.index({local_ids, cameras});
+    auto cur_uv = current.uv.index({local_ids, cameras});
+    auto depth = current.depth.index({local_ids, cameras});
+    auto offsets = patch_offsets(problem.patch_radius, ref_uv.options());
+    auto ref_patch_uv = ref_uv.unsqueeze(1) + offsets.unsqueeze(0);
+    auto cur_patch_uv = cur_uv.unsqueeze(1) + offsets.unsqueeze(0);
+    const auto minimum = std::max(1.0, static_cast<double>(offsets.size(0)) * problem.min_valid_patch_ratio);
+    auto ref_patch_valid = in_image_patch_bounds(ref_patch_uv, cameras, image_sizes).to(torch::kFloat).sum(1) >= minimum;
+    auto current_patch_valid = in_image_patch_bounds(cur_patch_uv, cameras, image_sizes).to(torch::kFloat).sum(1) >= minimum;
+    auto positive_depth = depth > 1e-8F;
+    auto in_bounds = in_image_bounds(cur_uv, cameras, image_sizes);
+    auto valid = ref_patch_valid & current_patch_valid & positive_depth & in_bounds;
+    auto residuals = torch::full({global_ids.size(0)}, std::numeric_limits<float>::quiet_NaN(), points.options());
+    auto valid_ids = torch::nonzero(valid).reshape({-1});
+    if (valid_ids.numel() > 0) {
+        auto chosen_cameras = cameras.index_select(0, valid_ids);
+        auto reference_patch = sample_per_camera(reference_images, ref_patch_uv.index_select(0, valid_ids), chosen_cameras);
+        auto current_patch = sample_per_camera(current_images, cur_patch_uv.index_select(0, valid_ids), chosen_cameras);
+        residuals.index_put_({valid_ids}, patch_loss(reference_patch, current_patch, problem.photometric_loss));
+    }
+    return {global_ids, cameras, residuals, torch::ones_like(valid), positive_depth, in_bounds,
+            ref_patch_valid & current_patch_valid, valid};
 }
 
 torch::Tensor predict(NDeFInternalModel& model, const torch::Tensor& points, int64_t batch_size) {
@@ -270,6 +338,29 @@ NDeFResult NDeFSolver::solve(const NDeFProblem& problem) const {
         for (size_t index = 0; index < parameters.size(); ++index) parameters[index].copy_(best_parameters[index]);
     }
     model.eval();
+    torch::Tensor evaluation_indices;
+    EvaluationObservations evaluation_rows;
+    int64_t evaluation_requested_count = 0, evaluation_valid_count = 0, evaluation_supervised_count = 0;
+    double evaluation_residual = std::numeric_limits<double>::quiet_NaN();
+    if (problem.evaluation_enabled) {
+        // This set is selected without torch RNG, after all optimizer draws,
+        // and evaluated without backward/update.  It therefore cannot change
+        // the training sample sequence or best-checkpoint selection.
+        auto indices_cpu = fixed_indices(points_count, problem.evaluation_sample_count, problem.evaluation_seed);
+        auto evaluation_problem = problem;
+        evaluation_problem.smoothness_weight = 0.0;
+        torch::NoGradGuard guard;
+        auto observation = objective(model, evaluation_problem, geometry, reference_surface, reference_uv,
+            reference_valid, visible_counts, indices_cpu.to(device), reference_images, current_images, image_sizes);
+        evaluation_indices = indices_cpu;
+        evaluation_requested_count = indices_cpu.numel();
+        evaluation_valid_count = static_cast<int64_t>(observation.valid_pairs);
+        evaluation_supervised_count = static_cast<int64_t>(observation.supervised_pairs);
+        evaluation_residual = observation.supervised_pairs > 0 ? observation.photo.item<double>() : std::numeric_limits<double>::quiet_NaN();
+        auto rows = evaluation_observations(model, evaluation_problem, geometry, reference_surface, reference_uv,
+            reference_valid, indices_cpu.to(device), reference_images, current_images, image_sizes);
+        evaluation_rows = std::move(rows);
+    }
     auto strain_cpu = compute_neural_strain_3d(
         [&model](const torch::Tensor& points) { return model.forward(points); }, reference_surface).cpu();
     auto deformation_cpu = predict(model, reference_surface, problem.prediction_batch_size);
@@ -284,6 +375,20 @@ NDeFResult NDeFSolver::solve(const NDeFProblem& problem) const {
     }
 
     NDeFResult result;
+    result.evaluation_indices = evaluation_indices;
+    result.evaluation_observation_surface_indices = evaluation_rows.surface_indices.defined() ? evaluation_rows.surface_indices.cpu() : torch::empty({0}, torch::kLong);
+    result.evaluation_observation_camera_ids = evaluation_rows.camera_ids.defined() ? evaluation_rows.camera_ids.cpu() : torch::empty({0}, torch::kLong);
+    result.evaluation_observation_residuals = evaluation_rows.residuals.defined() ? evaluation_rows.residuals.cpu() : torch::empty({0}, torch::kFloat32);
+    result.evaluation_observation_reference_visible = evaluation_rows.reference_visible.defined() ? evaluation_rows.reference_visible.cpu() : torch::empty({0}, torch::kBool);
+    result.evaluation_observation_positive_depth = evaluation_rows.positive_depth.defined() ? evaluation_rows.positive_depth.cpu() : torch::empty({0}, torch::kBool);
+    result.evaluation_observation_in_bounds = evaluation_rows.in_bounds.defined() ? evaluation_rows.in_bounds.cpu() : torch::empty({0}, torch::kBool);
+    result.evaluation_observation_patch_valid = evaluation_rows.patch_valid.defined() ? evaluation_rows.patch_valid.cpu() : torch::empty({0}, torch::kBool);
+    result.evaluation_observation_valid = evaluation_rows.valid.defined() ? evaluation_rows.valid.cpu() : torch::empty({0}, torch::kBool);
+    result.evaluation_requested_count = evaluation_requested_count;
+    result.evaluation_valid_count = evaluation_valid_count;
+    result.evaluation_supervised_count = evaluation_supervised_count;
+    result.evaluation_seed = problem.evaluation_seed;
+    result.evaluation_residual = evaluation_residual;
     const auto world_scale = static_cast<float>(problem.sfm_to_world_scale);
     result.reference_surface_sfm = reference_cpu;
     result.current_surface_sfm = current_cpu;

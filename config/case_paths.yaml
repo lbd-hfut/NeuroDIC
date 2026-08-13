@@ -31,7 +31,7 @@ pin_multi:
   case:
     root: case/Multi/CylinderDIC
     images: images
-    calibration: result/calibration_multiview/calibration_result_scaled.json
+    calibration: result/calibration/calibration_result_scaled.json
     # Every view's sorted first image is the reference image.
     frame: -1
   pair_roi:

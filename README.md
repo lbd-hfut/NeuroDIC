@@ -54,6 +54,32 @@ export MPLCONFIGDIR=/tmp/neurodic-matplotlib
 $ND_ENV/bin/python -c "import neurodic; print(neurodic.native_available())"
 ```
 
+## Coding-Agent / Skill Usage
+
+The canonical, vendor-neutral coding-agent entry is
+[`skills/neurodic/SKILL.md`](skills/neurodic/SKILL.md). It supervises the
+versioned control-plane CLI and JSON/filesystem contracts; NeuroDIC itself does
+not embed an LLM agent, MCP server, or vendor SDK.
+
+From a source checkout, use the portable CLI prefix:
+
+```bash
+PYTHONPATH=python /home/a306/miniconda3/envs/neurodic/bin/python -m neurodic.cli --help
+```
+
+Start with `inspect`, then `evaluate` and `diagnose`; any recommendation remains
+a bounded hypothesis that must be dry-run planned before an explicitly approved
+guarded execution. See [`docs/agent_compatibility.md`](docs/agent_compatibility.md)
+for the command/JSON boundary, current execution coverage, mutation rules, and
+compatibility limitations.
+
+Across solver families, the control plane supports inspection, evaluation,
+diagnosis, bounded recommendation, trial planning, comparison, and best
+management. Runtime capability is emitted in each planned action and guarded
+execution fails closed when unsupported. Current real execution coverage is
+partial: only PIN Multi single-pair `pair_roi` is guarded; PIN, Stereo, PIN Multi
+solve/fusion, and NDeF full scientific execution are not claimed as supported.
+
 ## Running NDeF clearly
 
 The validated example configuration is
@@ -240,8 +266,8 @@ The reconstruction figures use actual XYZ axes. The deformation figures plot
 the reference surface in 3D and color it by magnitude, Ux, Uy, or Uz; component
 color scales are symmetric around zero.
 
-The detailed Python-to-C++ deformation audit is in
-[`docs/migration_ndef_deformation.md`](docs/migration_ndef_deformation.md).
+The detailed NDeF solver notes are in
+[`docs/ndef_solver.md`](docs/ndef_solver.md).
 
 ## Running pairwise multi-view PIN-DIC (pin_multi_slover)
 

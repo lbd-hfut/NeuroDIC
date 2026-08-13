@@ -50,6 +50,12 @@ public:
     double photometric_learning_rate{5e-4};
     PhotometricLossType photometric_loss{PhotometricLossType::ZNSSD};
     bool compute_neural_strain_2d{true};
+    // Optional bounded post-training observation set. The seed is local to
+    // evaluation sampling and is never consumed by optimizer sampling.
+    bool evaluation_enabled{false};
+    int evaluation_sample_count{1024};
+    int64_t evaluation_seed{104729};
+    int evaluation_patch_radius{0};  // 0 reuses znssd_kernel_size / 2.
     torch::Device device{torch::kCPU};
 };
 

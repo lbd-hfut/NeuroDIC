@@ -10,6 +10,7 @@
 #pragma once
 
 #include <functional>
+#include <vector>
 
 #include <torch/torch.h>
 
@@ -20,6 +21,7 @@ using LossClosure = std::function<torch::Tensor()>;
 struct OptimizationResult {
     int iterations{0};
     double final_loss{0.0};
+    std::vector<double> losses;
 };
 
 class Optimizer {

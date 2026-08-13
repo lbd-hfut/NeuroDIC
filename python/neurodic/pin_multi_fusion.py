@@ -175,6 +175,7 @@ def _fuse(products: dict[str, dict[str, Any]], output_dir: Path,
         source = np.concatenate(candidates_source)
         reprojection = np.concatenate(candidates_reprojection)
         cells = np.floor(reference / options.voxel_size).astype(np.int64)
+        _write_preselection_consistency(output_dir, cells, reference, current, source, pair_names, options.voxel_size)
         # Sort all pairs together, placing the lowest reprojection-error point
         # first within each exact 3-D voxel coordinate.  Do not hash voxel
         # coordinates into one integer: that can collide for large/negative
@@ -276,3 +277,37 @@ def _fuse(products: dict[str, dict[str, Any]], output_dir: Path,
         summary["rigid_translations_per_pair"] = rigid_translations
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
+
+
+def _write_preselection_consistency(output_dir: Path, cells: np.ndarray, reference: np.ndarray,
+                                    current: np.ndarray, source: np.ndarray, pair_names: list[str],
+                                    voxel_size: float) -> None:
+    """Observe candidate disagreement before the existing voxel winner selection."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    order = np.lexsort((cells[:, 2], cells[:, 1], cells[:, 0]))
+    groups: list[dict[str, Any]] = []
+    start = 0
+    while start < len(order):
+        end = start + 1
+        while end < len(order) and np.array_equal(cells[order[start]], cells[order[end]]): end += 1
+        ids = order[start:end]; sources = source[ids]
+        if np.unique(sources).size >= 2:
+            positions = reference[ids]; displacement = current[ids] - reference[ids]
+            center = np.median(displacement, axis=0)
+            disagreement = np.linalg.norm(displacement - center, axis=1)
+            position_center = np.median(positions, axis=0)
+            groups.append({"cell": cells[ids[0]], "source_count": int(np.unique(sources).size), "point_count": int(len(ids)),
+                           "position_spread": float(np.linalg.norm(positions - position_center, axis=1).max()),
+                           "disagreement_median": float(np.median(disagreement)), "disagreement_p95": float(np.percentile(disagreement, 95)),
+                           "source_ids": np.unique(sources)})
+        start = end
+    schema = "neurodic.pin_multi_consistency/v1"
+    if groups:
+        np.savez_compressed(output_dir / "preselection_consistency.npz", schema_version=np.asarray(schema),
+                            voxel=np.stack([item["cell"] for item in groups]), source_pair_count=np.asarray([item["source_count"] for item in groups]),
+                            point_count=np.asarray([item["point_count"] for item in groups]), position_spread=np.asarray([item["position_spread"] for item in groups]),
+                            disagreement_median=np.asarray([item["disagreement_median"] for item in groups]), disagreement_p95=np.asarray([item["disagreement_p95"] for item in groups]))
+    else:
+        np.savez_compressed(output_dir / "preselection_consistency.npz", schema_version=np.asarray(schema), voxel=np.empty((0, 3), np.int64), source_pair_count=np.empty(0, np.int64), point_count=np.empty(0, np.int64), position_spread=np.empty(0), disagreement_median=np.empty(0), disagreement_p95=np.empty(0))
+    values = np.asarray([item["disagreement_median"] for item in groups])
+    (output_dir / "preselection_consistency.json").write_text(json.dumps({"schema_version": schema, "sampling": "post_filter_preselection_exact_reference_voxel", "voxel_size": voxel_size, "pair_names": pair_names, "overlap_group_count": len(groups), "summary": {"disagreement_median": float(np.median(values)) if len(values) else None, "disagreement_p95": float(np.percentile(values, 95)) if len(values) else None}}, indent=2), encoding="utf-8")
