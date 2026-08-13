@@ -1,7 +1,10 @@
 #include "neurodic/solver/pin_stereo_solver.hpp"
 
+#include <limits>
+
 #include "neurodic/core/exceptions.hpp"
 #include "neurodic/geometry/stereo_geometry.hpp"
+#include "neurodic/postprocess/strain.hpp"
 #include "neurodic/solver/pin_solver.hpp"
 
 namespace neurodic {
@@ -61,9 +64,15 @@ PINStereoResult PINStereoSolver::reconstruct(const PINResult& reference_disparit
     }
     auto reference_points = reference.points * problem.world_scale;
     auto current_points = current.points * problem.world_scale;
+    auto displacement_3d = geometry.displacement_3d(reference_points, current_points);
+    auto strain_3d = problem.compute_traditional_strain
+        ? compute_traditional_strain_3d(reference_points, displacement_3d, valid,
+                                        problem.traditional_strain_neighbors)
+        : torch::full({reference_points.size(0), 6}, std::numeric_limits<double>::quiet_NaN(),
+                      reference_points.options());
     return {reference_disparity, left_temporal, deformed_disparity,
             l0, r0, l1, r1, reference_points, current_points,
-            geometry.displacement_3d(reference_points, current_points), valid,
+            displacement_3d, {reference_points, strain_3d}, valid,
             reference.max_reprojection_error, current.max_reprojection_error};
 }
 

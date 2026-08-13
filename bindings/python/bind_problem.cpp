@@ -38,6 +38,7 @@ void bind_problem(py::module_& module) {
         .def_readwrite("seed_learning_rate", &neurodic::PINProblem::seed_learning_rate)
         .def_readwrite("photometric_learning_rate", &neurodic::PINProblem::photometric_learning_rate)
         .def_readwrite("photometric_loss", &neurodic::PINProblem::photometric_loss)
+        .def_readwrite("compute_neural_strain_2d", &neurodic::PINProblem::compute_neural_strain_2d)
         .def("set_device", [](neurodic::PINProblem& problem, const std::string& device) {
             problem.device = torch::Device(device);
         })
@@ -50,6 +51,8 @@ void bind_problem(py::module_& module) {
              py::arg("deformed_disparity"), py::arg("left_camera"), py::arg("right_camera"))
         .def_readwrite("world_scale", &neurodic::PINStereoProblem::world_scale)
         .def_readwrite("require_image_bounds", &neurodic::PINStereoProblem::require_image_bounds)
+        .def_readwrite("compute_traditional_strain", &neurodic::PINStereoProblem::compute_traditional_strain)
+        .def_readwrite("traditional_strain_neighbors", &neurodic::PINStereoProblem::traditional_strain_neighbors)
         .def("set_reconstruction_options", [](neurodic::PINStereoProblem& problem, double max_error,
                                                 bool positive_depth, int undistort_iterations) {
             problem.reconstruction.max_reprojection_error = max_error;

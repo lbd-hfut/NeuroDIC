@@ -35,6 +35,7 @@ struct FieldResult {
 
 struct PINResult {
     FieldResult displacement;
+    FieldResult strain;  // Green--Lagrange: [E_xx, E_yy, E_xy]
     SolverDiagnostics diagnostics;
 };
 
@@ -49,6 +50,7 @@ struct PINStereoResult {
     torch::Tensor reference_points;              // CPU float64 [N,3]
     torch::Tensor current_points;                // CPU float64 [N,3]
     torch::Tensor displacement_3d;               // CPU float64 [N,3]
+    FieldResult strain_3d;                       // [N,6], NaN for invalid/undersampled points
     torch::Tensor valid;                         // CPU bool [N]
     torch::Tensor reference_reprojection_error;  // CPU float64 [N]
     torch::Tensor current_reprojection_error;    // CPU float64 [N]
@@ -66,6 +68,7 @@ struct PINMultiResult {
 struct NDeFResult {
     FieldResult surface;      // coordinates=reference surface; values=current surface
     FieldResult deformation;
+    FieldResult strain;       // Green--Lagrange: [E_xx,E_yy,E_zz,E_xy,E_yz,E_xz]
     torch::Tensor reference_uv;       // CPU float32 [N,V,2]
     torch::Tensor current_uv;         // CPU float32 [N,V,2]
     torch::Tensor reference_depth;    // CPU float32 [N,V]

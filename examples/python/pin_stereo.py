@@ -1,5 +1,8 @@
-"""PIN-DIC stereo Python example skeleton."""
+"""Run stereo PIN-DIC using the ``pin_stereo`` paths in config/case_paths.yaml."""
 
 import neurodic
 
-assert neurodic.pin_dic is not None
+
+
+if __name__ == "__main__":
+    neurodic.run_stereo_case(neurodic.load_case_config("config/pin_stereo.yaml", "pin_stereo"))

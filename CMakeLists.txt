@@ -49,6 +49,10 @@ if(NEURODIC_TORCH_FOUND)
         src/model/ndef_depth_model.cpp
         src/model/model_factory.cpp
         src/optimizer/adam.cpp
+        src/postprocess/strain.cpp
+        src/postprocess/filtering.cpp
+        src/postprocess/surface_mesh.cpp
+        src/postprocess/surface_field.cpp
         src/representation/pin_displacement_field.cpp
         src/representation/ndef_surface_field.cpp
         src/representation/ndef_deformation_field.cpp
@@ -114,6 +118,7 @@ if(NEURODIC_BUILD_PYTHON AND NEURODIC_PYBIND11_FOUND)
         bindings/python/bind_geometry.cpp
         bindings/python/bind_solver.cpp
         bindings/python/bind_result.cpp
+        bindings/python/bind_postprocess.cpp
     )
     target_link_libraries(_neurodic PRIVATE neurodic_core)
     if(NEURODIC_TORCH_PYTHON_LIBRARY)
@@ -141,6 +146,7 @@ if(NEURODIC_BUILD_TESTS AND NEURODIC_TORCH_FOUND)
         tests/cpp/test_pin_multi_solver.cpp
         tests/cpp/test_ndef_solver.cpp
         tests/cpp/test_ndef_precalculation.cpp
+        tests/cpp/test_postprocess.cpp
     )
     target_link_libraries(neurodic_cpp_tests PRIVATE neurodic_core)
     neurodic_apply_warnings(neurodic_cpp_tests)

@@ -5,22 +5,12 @@ mode: pairwise_multiview
 runtime:
   random_seed: 20260807
   deterministic: true
-case:
-  root: case/Multi/CylinderDIC
-  images: images
-  # `run_multiview_case` writes the current staged self-calibration result here.
-  # Its cameras are already transformed into the metric chessboard frame, so
-  # reconstruction.world_scale remains 1.0 and must not reapply the SfM scale.
-  calibration: result/calibration_final/calibration_result_scaled.json
-  reference_frame: 001.bmp
-  frame: -1
 camera_pairs:
   selection: auto_spatial_neighbors
   wrap: true
   manual: []
 pair_roi:
   generator: reference_pair_sift
-  output: result/pin_multi_slover/pair_roi
   feature_method: sift
   max_features: 12000
   match_ratio: 0.75
@@ -30,17 +20,17 @@ pair_roi:
   support: convex_hull
   alpha_radius_scale: 8.0
   erode_pixels: 0
-# Every A0->B0, A0->Ak, and A0->Bk planar field uses this configuration.
-# Do not duplicate model, initialization, or training options in this file.
-pin_2d_config: config/pin_2d.yaml
+# Every A0->B0, A0->Ak, and A0->Bk planar field uses the path supplied by the
+# selected case in case_paths.yaml.  Do not duplicate model, initialization,
+# or training options in this file.
 reconstruction:
   min_views: 2
   max_reprojection_error_px: 5.0
   require_positive_depth: true
   world_scale: 1.0
 fusion:
-  enabled: false  # Pairwise surfaces must be validated before enabling.
-  voxel_size: 1.0
+  enabled: true
+  voxel_size: 0.1
   max_reprojection_error_px: 5.0
   displacement_mad_factor: 5.0
   # Remove spatially isolated points from the fused reference surface.  The
@@ -48,10 +38,9 @@ fusion:
   surface_outlier_k_neighbors: 16
   surface_outlier_mad_factor: 5.0
   remove_rigid_body_motion: false
-output:
-  result: result/pin_multi_slover
-  visualization: visualization/pin_multi_slover
+traditional_strain:
+  # Applied once to each fused 3D surface, never to an individual camera pair.
+  neighbors: 12
 notes:
   - This route owns pair-local SIFT ROI masks created from reference-time images.
-  - Do not use case.result/mask/per_camera; that location belongs to NDeF ROI generation.
-  - The pairwise planar solver configuration is loaded from pin_2d_config.
+  - Pair-local ROI and NDeF ROI products are kept separate.

@@ -21,6 +21,7 @@ void bind_problem(py::module_& module);
 void bind_geometry(py::module_& module);
 void bind_solver(py::module_& module);
 void bind_result(py::module_& module);
+void bind_postprocess(py::module_& module);
 
 PYBIND11_MODULE(_neurodic, module) {
     module.doc() = "NeuroDIC C++/LibTorch core bindings.";
@@ -34,4 +35,5 @@ PYBIND11_MODULE(_neurodic, module) {
     bind_geometry(module);
     bind_solver(module);
     bind_result(module);
+    bind_postprocess(module);
 }

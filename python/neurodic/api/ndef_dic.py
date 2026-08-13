@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from ..config import load_config
+from ..case_io import named_multiview_image_pairs
 from ..ndef_paths import camera_name_from_label, ndef_run_roots
 from ..models import _require_backend
 from ..runtime import configure_runtime
@@ -144,6 +145,7 @@ def _save(result, result_root: Path, visualization_root: Path, surface_payload: 
         directory.mkdir(parents=True, exist_ok=True)
     reference, current = result.surface.coordinates.numpy(), result.surface.values.numpy()
     displacement = result.deformation.values.numpy()
+    strain = result.strain.values.numpy()
     valid = result.valid.numpy().astype(bool)
     magnitude = np.linalg.norm(displacement, axis=1).astype(np.float32)
     source_fields = {key: np.asarray(surface_payload[key]) for key in
@@ -158,6 +160,7 @@ def _save(result, result_root: Path, visualization_root: Path, surface_payload: 
              cam_names=np.asarray(camera_names))
     np.savez_compressed(deformation / "reference_to_current.npz", reference_points=reference,
              current_points=current, displacement=displacement, displacement_magnitude=magnitude,
+             strain=strain, strain_components=np.asarray(["E_xx", "E_yy", "E_zz", "E_xy", "E_yz", "E_xz"]),
              reference_points_sfm=result.reference_surface_sfm.numpy(),
              current_points_sfm=result.current_surface_sfm.numpy(),
              displacement_sfm=result.deformation_sfm.numpy(),
@@ -206,6 +209,7 @@ def _save(result, result_root: Path, visualization_root: Path, surface_payload: 
     (diagnostics / "summary.json").write_text(json.dumps({
         "coordinate_frame": "calibration world frame",
         "deformation": "X_current - X_reference",
+        "strain": "Green-Lagrange [E_xx, E_yy, E_zz, E_xy, E_yz, E_xz] from deformation-network autograd",
         "sfm_to_world_scale": result.sfm_to_world_scale,
         "visibility": "fixed surface-dataset reference visibility; current positive depth and image bounds",
         "metrics": dict(result.diagnostics.metrics),
@@ -267,11 +271,11 @@ def ndef_sparse_precalculation(config: str | Path | Mapping[str, Any] = "config/
     if camera_values is None: raise ValueError("calibration must contain cameras or scaled_cameras")
     names = [camera_name_from_label(str(item.get("label", "")), f"cam_{index}")
              for index, item in enumerate(camera_values)]
-    frame = int(case.get("frame", -1)); reference, current = [], []
-    for name in names:
-        paths = sorted(path for path in (image_root / name).iterdir() if path.is_file())
-        if len(paths) < 2: raise ValueError(f"{name} requires reference and deformed images")
-        reference.append(_read_gray(paths[0])); current.append(_read_gray(paths[frame]))
+    frame = int(case.get("frame", -1))
+    references, deformed_frames = named_multiview_image_pairs(image_root, names)
+    try: current_paths = deformed_frames[frame]
+    except IndexError as error: raise ValueError(f"case.frame {frame} is outside the {len(deformed_frames)} NDeF frames") from error
+    reference = [_read_gray(path) for path in references]; current = [_read_gray(path) for path in current_paths]
     if len({image.shape for image in reference + current}) != 1: raise ValueError("all sparse-precalculation images must share one shape")
     masks = _load_masks(root, names, reference[0].shape, values)
     payload = np.load(_resolve(root, case["reference_surface"]), allow_pickle=True)
@@ -343,12 +347,13 @@ def ndef_dic(config: str | Path | Mapping[str, Any] = "config/ndef_multi.yaml", 
     names = [camera_name_from_label(str(camera.get("label", "")), f"cam_{index}")
              for index, camera in enumerate(camera_values)]
     frame = int(case.get("frame", -1))
-    reference, deformed = [], []
-    for name in names:
-        paths = sorted(path for path in (image_root / name).iterdir() if path.is_file())
-        if len(paths) < 2:
-            raise ValueError(f"{name} requires reference and deformed images")
-        reference.append(_read_gray(paths[0])); deformed.append(_read_gray(paths[frame]))
+    references, deformed_frames = named_multiview_image_pairs(image_root, names)
+    try:
+        current_paths = deformed_frames[frame]
+    except IndexError as error:
+        raise ValueError(f"case.frame {frame} is outside the {len(deformed_frames)} NDeF frames") from error
+    reference = [_read_gray(path) for path in references]
+    deformed = [_read_gray(path) for path in current_paths]
     if len({image.shape for image in reference + deformed}) != 1:
         raise ValueError("NDeF currently requires all camera images to share one shape")
     masks = _load_masks(root, names, reference[0].shape, values)

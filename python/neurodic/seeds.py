@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from .config import load_config
+from .case_io import planar_image_series
 from .runtime import configure_runtime
 
 try:
@@ -88,11 +89,12 @@ def run_seed_case(case_root: str | Path, strategy: str, config_path: str | Path)
     config = load_config(config_path)
     config = dict(config)
     config["initialization"] = dict(config.get("initialization", {}), strategy=strategy)
-    reference = cv2.imread(str(root / "001.bmp"), cv2.IMREAD_GRAYSCALE)
-    deformed = cv2.imread(str(root / "002.bmp"), cv2.IMREAD_GRAYSCALE)
-    roi_image = cv2.imread(str(root / "003.bmp"), cv2.IMREAD_GRAYSCALE)
+    reference_path, deformed_paths, roi_path = planar_image_series(root)
+    reference = cv2.imread(str(reference_path), cv2.IMREAD_GRAYSCALE)
+    deformed = cv2.imread(str(deformed_paths[0]), cv2.IMREAD_GRAYSCALE)
+    roi_image = cv2.imread(str(roi_path), cv2.IMREAD_GRAYSCALE)
     if reference is None or deformed is None or roi_image is None:
-        raise FileNotFoundError(f"Expected 001.bmp, 002.bmp, and ROI 003.bmp in {root}")
+        raise FileNotFoundError(f"Unable to read the discovered planar reference, deformation, or ROI in {root}")
     if roi_image.shape != reference.shape or deformed.shape != reference.shape:
         raise ValueError("Reference, deformed, and ROI images must have the same shape")
     result = initialize_seeds(reference, deformed, roi_image != 0, config)
@@ -104,9 +106,9 @@ def run_seed_case(case_root: str | Path, strategy: str, config_path: str | Path)
     np.savez_compressed(result_dir / f"{stem}.npz", seed_pos=result["seed_pos"], seed_uv=result["seed_uv"], scale_uv=result["scale_uv"])
     summary = {
         "strategy": strategy,
-        "reference_image": "001.bmp",
-        "deformed_image": "002.bmp",
-        "roi_image": "003.bmp",
+        "reference_image": reference_path.name,
+        "deformed_image": deformed_paths[0].name,
+        "roi_image": roi_path.name,
         "seed_count": int(len(result["seed_pos"])),
         "uvmean": [float(v) for v in result["scale_uv"][:2]],
         "uvscale": [float(v) for v in result["scale_uv"][2:]],

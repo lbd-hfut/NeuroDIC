@@ -14,6 +14,7 @@
 #include "neurodic/model/ndef_internal_model.hpp"
 #include "neurodic/representation/ndef_deformation_field.hpp"
 #include "neurodic/representation/ndef_surface_field.hpp"
+#include "neurodic/postprocess/strain.hpp"
 
 namespace neurodic {
 namespace {
@@ -269,6 +270,8 @@ NDeFResult NDeFSolver::solve(const NDeFProblem& problem) const {
         for (size_t index = 0; index < parameters.size(); ++index) parameters[index].copy_(best_parameters[index]);
     }
     model.eval();
+    auto strain_cpu = compute_neural_strain_3d(
+        [&model](const torch::Tensor& points) { return model.forward(points); }, reference_surface).cpu();
     auto deformation_cpu = predict(model, reference_surface, problem.prediction_batch_size);
     auto reference_cpu = reference_surface.cpu();
     auto current_cpu = reference_cpu + deformation_cpu;
@@ -290,6 +293,8 @@ NDeFResult NDeFSolver::solve(const NDeFProblem& problem) const {
     result.surface.values = current_cpu * world_scale;
     result.deformation.coordinates = reference_cpu * world_scale;
     result.deformation.values = deformation_cpu * world_scale;
+    result.strain.coordinates = reference_cpu * world_scale;
+    result.strain.values = strain_cpu;
     result.reference_uv = reference_uv.cpu(); result.current_uv = current_projection.uv.cpu();
     result.reference_depth = reference_projection.depth.cpu(); result.current_depth = current_projection.depth.cpu();
     result.valid = valid.cpu();

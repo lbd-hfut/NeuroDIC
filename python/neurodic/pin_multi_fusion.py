@@ -26,6 +26,7 @@ class PINMultiFusionOptions:
     displacement_mad_factor: float = 5.0
     surface_outlier_k_neighbors: int = 16
     surface_outlier_mad_factor: float = 5.0
+    traditional_strain_neighbors: int = 12
 
 
 def _options_from_config(values: Mapping[str, Any]) -> PINMultiFusionOptions:
@@ -37,51 +38,8 @@ def _options_from_config(values: Mapping[str, Any]) -> PINMultiFusionOptions:
         displacement_mad_factor=float(fusion.get("displacement_mad_factor", 5.0)),
         surface_outlier_k_neighbors=int(fusion.get("surface_outlier_k_neighbors", 16)),
         surface_outlier_mad_factor=float(fusion.get("surface_outlier_mad_factor", 5.0)),
+        traditional_strain_neighbors=int(values.get("traditional_strain", {}).get("neighbors", 12)),
     )
-
-
-def _surface_inlier_mask(points: np.ndarray, *, k_neighbors: int,
-                         mad_factor: float) -> tuple[np.ndarray, dict[str, float | int | None]]:
-    """Reject isolated and off-surface fused points using robust local geometry."""
-    count = int(points.shape[0])
-    keep = np.ones(count, dtype=bool)
-    metrics: dict[str, float | int | None] = {
-        "surface_outlier_k_neighbors": int(k_neighbors),
-        "surface_outlier_mad_factor": float(mad_factor),
-        "surface_neighbor_distance_median_mm": None,
-        "surface_neighbor_distance_mad_mm": None,
-        "surface_neighbor_distance_threshold_mm": None, "surface_plane_residual_median_mm": None,
-        "surface_plane_residual_mad_mm": None, "surface_plane_residual_threshold_mm": None,
-    }
-    if count == 0 or mad_factor <= 0.0 or k_neighbors < 1 or count <= k_neighbors:
-        return keep, metrics
-    from scipy.spatial import cKDTree
-
-    distances, ids = cKDTree(points).query(points, k=k_neighbors + 1)
-    score = np.median(np.asarray(distances)[:, 1:], axis=1)
-    median = float(np.median(score))
-    mad = float(np.median(np.abs(score - median)))
-    # A regular voxelized surface can have zero MAD.  Retain a finite relative
-    # tolerance in that case so an isolated point does not disable cleaning.
-    threshold = (float(median + mad_factor * mad)
-                 if mad > np.finfo(float).eps
-                 else float(max(median * (1.0 + 0.25 * mad_factor), median + 1e-6)))
-    neighbours = points[np.asarray(ids)[:, 1:]]
-    centres = neighbours.mean(axis=1)
-    _, _, vectors = np.linalg.svd(neighbours - centres[:, None, :], full_matrices=False)
-    plane_residual = np.abs(np.einsum("ij,ij->i", points - centres, vectors[:, -1, :]))
-    plane_median = float(np.median(plane_residual)); plane_mad = float(np.median(np.abs(plane_residual - plane_median)))
-    plane_threshold = float(plane_median + mad_factor * plane_mad) if plane_mad > np.finfo(float).eps else float(max(plane_median * (1 + .25 * mad_factor), plane_median + 1e-6))
-    keep = (score <= threshold) & (plane_residual <= plane_threshold)
-    metrics.update({
-        "surface_neighbor_distance_median_mm": median,
-        "surface_neighbor_distance_mad_mm": mad,
-        "surface_neighbor_distance_threshold_mm": threshold,
-        "surface_plane_residual_median_mm": plane_median,
-        "surface_plane_residual_mad_mm": plane_mad,
-        "surface_plane_residual_threshold_mm": plane_threshold,
-    })
-    return keep, metrics
 
 
 def _load_pair_products(pairs_root: Path, max_reprojection_error_px: float) -> dict[str, dict[str, Any]]:
@@ -233,16 +191,37 @@ def _fuse(products: dict[str, dict[str, Any]], output_dir: Path,
         fused_reprojection = reprojection[selected]
 
     voxel_selected_points = int(fused_reference.shape[0])
-    surface_keep, surface_metrics = _surface_inlier_mask(
-        fused_reference,
-        k_neighbors=options.surface_outlier_k_neighbors,
-        mad_factor=options.surface_outlier_mad_factor,
-    )
+    import torch
+    from .models import _require_backend
+    surface_cleanup = _require_backend().clean_pin_multi_surface(
+        torch.as_tensor(fused_reference, dtype=torch.float64),
+        int(options.surface_outlier_k_neighbors), float(options.surface_outlier_mad_factor))
+    surface_keep = surface_cleanup.inlier_mask.numpy().astype(bool)
+    surface_metrics: dict[str, float | int | None] = {
+        "surface_outlier_k_neighbors": int(options.surface_outlier_k_neighbors),
+        "surface_outlier_mad_factor": float(options.surface_outlier_mad_factor),
+        "surface_neighbor_distance_median_mm": float(surface_cleanup.neighbor_distance_median),
+        "surface_neighbor_distance_mad_mm": float(surface_cleanup.neighbor_distance_mad),
+        "surface_neighbor_distance_threshold_mm": float(surface_cleanup.neighbor_distance_threshold),
+        "surface_plane_residual_median_mm": float(surface_cleanup.plane_residual_median),
+        "surface_plane_residual_mad_mm": float(surface_cleanup.plane_residual_mad),
+        "surface_plane_residual_threshold_mm": float(surface_cleanup.plane_residual_threshold),
+    }
     removed_by_surface = int((~surface_keep).sum())
     fused_reference = fused_reference[surface_keep]
     fused_current = fused_current[surface_keep]
     fused_source = fused_source[surface_keep]
     fused_reprojection = fused_reprojection[surface_keep]
+
+    # Strain is estimated only after all fusion cleanup has completed.  This
+    # prevents isolated/off-surface points from destabilising local gradients.
+    if fused_reference.shape[0]:
+        strain = _require_backend().compute_traditional_strain_3d(
+            torch.as_tensor(fused_reference, dtype=torch.float64),
+            torch.as_tensor(fused_current - fused_reference, dtype=torch.float64),
+            torch.ones(fused_reference.shape[0], dtype=torch.bool), options.traditional_strain_neighbors).numpy()
+    else:
+        strain = np.empty((0, 6), dtype=np.float64)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     np.savez(output_dir / "reference_surface.npz", points=fused_reference, valid=np.ones(fused_reference.shape[0], bool),
@@ -255,6 +234,21 @@ def _fuse(products: dict[str, dict[str, Any]], output_dir: Path,
              current_points=fused_current, displacement=fused_current - fused_reference,
              valid=np.ones(fused_reference.shape[0], bool), source_pair=fused_source, pair_names=pair_names,
              voxel_size=options.voxel_size)
+    np.savez(output_dir / "strain.npz", coordinates=fused_reference, strain=strain,
+             valid=np.isfinite(strain).all(axis=1),
+             strain_components=np.asarray(["E_xx", "E_yy", "E_zz", "E_xy", "E_yz", "E_xz"]),
+             source_pair=fused_source, pair_names=pair_names, voxel_size=options.voxel_size)
+    if fused_reference.shape[0]:
+        mesh_options = _require_backend().SurfaceMeshOptions()
+        mesh_options.k_neighbors = int(options.surface_outlier_k_neighbors)
+        mesh = _require_backend().triangulate_pin_multi_surface(
+            torch.as_tensor(fused_reference, dtype=torch.float64), mesh_options)
+        mesh_cleanup = _require_backend().clean_pin_multi_mesh(mesh.vertices, mesh.faces, mesh.quality)
+        face_mask = mesh_cleanup.face_mask.numpy().astype(bool)
+        np.savez(output_dir / "surface_mesh.npz", vertices=mesh.vertices.numpy(), faces=mesh.faces.numpy()[face_mask],
+                 normals=mesh.normals.numpy(), quality=mesh.quality.numpy()[face_mask], face_mask=face_mask,
+                 median_spacing=mesh.median_spacing, max_edge_length=mesh.max_edge_length,
+                 mean_edge_length=mesh_cleanup.mean_edge_length, overlap_distance=mesh_cleanup.overlap_distance)
 
     summary: dict[str, Any] = {
         "voxel_size": options.voxel_size,
@@ -275,6 +269,7 @@ def _fuse(products: dict[str, dict[str, Any]], output_dir: Path,
         "points_by_source": {name: int((fused_source == index).sum())
                              for index, name in enumerate(pair_names)},
         "coordinate_frame": "calibration world frame",
+        "traditional_strain_neighbors": options.traditional_strain_neighbors,
     }
     summary.update(surface_metrics)
     if options.remove_rigid_body_motion:

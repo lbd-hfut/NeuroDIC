@@ -1,0 +1,70 @@
+# Case-specific inputs, image order, and generated-product locations.
+#
+# Every relative path is resolved against ``case.root``.  Solver YAML files
+# intentionally contain only algorithm and training parameters; examples merge
+# one of the mappings below before starting a workflow.
+pin_2d:
+  case:
+    root: case/2D/ring
+    images_dir: .
+    # Sorted images: first = reference, last = ROI, every intermediate image
+    # is a deformed frame.  No individual frame names belong in this file.
+  output:
+    result: result/pin_2d
+    visualization: visualization/pin_2d
+
+pin_stereo:
+  case:
+    root: case/Stereo/plate_center_load
+    left_images: cam1
+    right_images: cam2
+    roi: ROI.bmp
+    camera_pair: result/calibration_stereo/camera_pair.json
+    # Sorted left/right images are paired by index; index 0 is the reference.
+    # -1 selects the last matching deformed pair.
+    frame: -1
+  output:
+    result: result/pin_stereo
+    visualization: visualization/pin_stereo
+
+pin_multi:
+  case:
+    root: case/Multi/CylinderDIC
+    images: images
+    calibration: result/calibration_multiview/calibration_result_scaled.json
+    # Every view's sorted first image is the reference image.
+    frame: -1
+  pair_roi:
+    output: result/pin_multi/pair_roi
+  output:
+    result: result/pin_multi
+    visualization: visualization/pin_multi
+  pin_2d_config: config/pin_2d.yaml
+
+ndef_multi:
+  case:
+    root: case/Multi/CylinderDIC
+    images: images
+    calibration: result/calibration_multiview/calibration_result_scaled.json
+    reference_surface: result/ndef_multi/surface/deformation_surface_dataset.npz
+    masks: result/ndef_multi/roi/per_camera
+    frame: -1
+  precalculation:
+    displacement: result/ndef_multi/precalculation/sparse_tracks.npz
+  output:
+    result: result
+    visualization: visualization
+    ndef_subdir: ndef_multi
+
+calibration_multiview:
+  inputs:
+    image_root: images
+  outputs:
+    result_subdir: calibration_multiview
+
+calibration_stereo:
+  inputs:
+    left_dir: calibrate1
+    right_dir: calibrate2
+  outputs:
+    result_subdir: calibration_stereo

@@ -16,6 +16,7 @@ void bind_result(py::module_& module) {
         .def_readonly("values", &neurodic::FieldResult::values);
     py::class_<neurodic::PINResult>(module, "PINResult")
         .def_readonly("displacement", &neurodic::PINResult::displacement)
+        .def_readonly("strain", &neurodic::PINResult::strain)
         .def_readonly("diagnostics", &neurodic::PINResult::diagnostics);
     py::class_<neurodic::PINStereoResult>(module, "PINStereoResult")
         .def_readonly("reference_disparity", &neurodic::PINStereoResult::reference_disparity)
@@ -28,6 +29,7 @@ void bind_result(py::module_& module) {
         .def_readonly("reference_points", &neurodic::PINStereoResult::reference_points)
         .def_readonly("current_points", &neurodic::PINStereoResult::current_points)
         .def_readonly("displacement_3d", &neurodic::PINStereoResult::displacement_3d)
+        .def_readonly("strain_3d", &neurodic::PINStereoResult::strain_3d)
         .def_readonly("valid", &neurodic::PINStereoResult::valid)
         .def_readonly("reference_reprojection_error", &neurodic::PINStereoResult::reference_reprojection_error)
         .def_readonly("current_reprojection_error", &neurodic::PINStereoResult::current_reprojection_error);
@@ -39,6 +41,7 @@ void bind_result(py::module_& module) {
     py::class_<neurodic::NDeFResult>(module, "NDeFResult")
         .def_readonly("surface", &neurodic::NDeFResult::surface)
         .def_readonly("deformation", &neurodic::NDeFResult::deformation)
+        .def_readonly("strain", &neurodic::NDeFResult::strain)
         .def_readonly("reference_uv", &neurodic::NDeFResult::reference_uv)
         .def_readonly("current_uv", &neurodic::NDeFResult::current_uv)
         .def_readonly("reference_depth", &neurodic::NDeFResult::reference_depth)

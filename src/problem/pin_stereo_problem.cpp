@@ -30,6 +30,8 @@ void PINStereoProblem::validate() const {
         throw ValidationError("Stereo PIN fields must share the L0 image shape and ROI");
     if (!std::isfinite(world_scale) || world_scale <= 0.0)
         throw ValidationError("Stereo PIN world_scale must be finite and positive");
+    if (traditional_strain_neighbors < 3)
+        throw ValidationError("Stereo PIN traditional_strain_neighbors must be at least 3");
 }
 
 }  // namespace neurodic

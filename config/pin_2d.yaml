@@ -14,7 +14,7 @@ model:
   activation: tanh
   fourier_encoding:
     # Fixed NDeF-style dyadic Fourier basis, not MSPINN's random B matrix.
-    enabled: true
+    enabled: false
     num_frequencies: 4
     include_input: false
     angular_scale: 3.141592653589793

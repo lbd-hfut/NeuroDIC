@@ -15,6 +15,8 @@ from typing import Any, Literal, Mapping
 
 import numpy as np
 
+from .case_io import image_files
+
 
 @dataclass(frozen=True)
 class PINMultiPairROIOptions:
@@ -408,14 +410,14 @@ def pin_multi_pair_roi(config: str | Path | Mapping[str, Any]) -> PINMultiROIRes
 
     selected = select_pin_multi_pairs(calibration, selection)
     image_root = root / str(case.get("images", "images"))
-    reference_frame = str(case.get("reference_frame", "001.bmp"))
 
     results: list[dict[str, Any]] = []
     for left, right, pair_diagnostics in selected:
         pair_id = pair_id_for(left, right)
-        left_path = image_root / left / reference_frame
-        right_path = image_root / right / reference_frame
-        if not left_path.exists() or not right_path.exists():
+        try:
+            left_path = image_files(image_root / left)[0]
+            right_path = image_files(image_root / right)[0]
+        except (FileNotFoundError, ValueError):
             results.append({"pair_id": pair_id, "left": left, "right": right, "status": "skipped",
                             "reason": "reference_image_missing", "diagnostics": pair_diagnostics,
                             "output_dir": str(output_root / pair_id)})

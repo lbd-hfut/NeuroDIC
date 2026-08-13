@@ -38,6 +38,7 @@ def test_synthetic_multiview_case_output_contract(tmp_path: Path) -> None:
         assert summary["reference_mean_reprojection_error_px"] >= 0.0
 
     deformation = np.load(result_root / "pairs" / "cam_0__cam_1" / "deformation" / "initial_to_current.npz")
+    assert "strain" not in deformation.files
     valid = deformation["valid"].astype(bool)
     displacement = deformation["displacement"][valid]
     assert displacement.size > 0

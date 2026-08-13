@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -10,6 +11,7 @@ import numpy as np
 
 from ..models import _require_backend
 from ..runtime import configure_runtime
+from ..case_io import stereo_image_pairs
 from .pin_dic import _build_problem, _mapping
 
 
@@ -87,12 +89,15 @@ def _save(result, result_root: Path, visualization_root: Path) -> None:
              right_coordinates=result.right_current_coordinates.numpy(), points=current, valid=valid,
              reprojection_error=result.current_reprojection_error.numpy())
     displacement = result.displacement_3d.numpy()
+    strain = result.strain_3d.values.numpy()
     np.savez(deformation_dir / "initial_to_last.npz", coordinates=result.left_reference_coordinates.numpy(),
-             reference_points=reference, current_points=current, displacement=displacement, valid=valid)
+             reference_points=reference, current_points=current, displacement=displacement, strain=strain,
+             strain_components=np.asarray(["E_xx", "E_yy", "E_zz", "E_xy", "E_yz", "E_xz"]), valid=valid)
     summary = {"total_points": int(result.valid.numel()),
                "valid_points": int(result.valid.sum().item()),
                "coordinate_frame": "calibration world frame",
-               "displacement": "X_current - X_reference"}
+               "displacement": "X_current - X_reference",
+               "strain": "Green-Lagrange; weighted local least-squares gradient on triangulated 3D points"}
     (deformation_dir / "initial_to_last_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     import matplotlib.pyplot as plt
     xy = result.left_reference_coordinates.numpy().astype(np.int64)
@@ -121,13 +126,15 @@ def pin_stereo_dic(config: str | Path | Mapping[str, Any] = "config/pin_stereo.y
     configure_runtime(values)
     case = values.get("case", {})
     root = Path(case.get("root", "."))
-    left_paths = sorted(path for path in _resolve(root, case["left_images"]).iterdir() if path.is_file())
-    right_paths = sorted(path for path in _resolve(root, case["right_images"]).iterdir() if path.is_file())
-    if len(left_paths) < 2 or len(right_paths) < 2:
-        raise ValueError("Stereo image directories each require a reference and current image")
+    (left_reference, right_reference), deformed_pairs = stereo_image_pairs(
+        _resolve(root, case["left_images"]), _resolve(root, case["right_images"]))
     frame = int(case.get("frame", -1))
-    l0, r0 = _read_gray(left_paths[0]), _read_gray(right_paths[0])
-    l1, r1 = _read_gray(left_paths[frame]), _read_gray(right_paths[frame])
+    try:
+        left_current, right_current = deformed_pairs[frame]
+    except IndexError as error:
+        raise ValueError(f"case.frame {frame} is outside the {len(deformed_pairs)} stereo deformed pairs") from error
+    l0, r0 = _read_gray(left_reference), _read_gray(right_reference)
+    l1, r1 = _read_gray(left_current), _read_gray(right_current)
     import cv2
     roi = cv2.imread(str(_resolve(root, case["roi"])), cv2.IMREAD_GRAYSCALE)
     if roi is None:
@@ -137,12 +144,17 @@ def pin_stereo_dic(config: str | Path | Mapping[str, Any] = "config/pin_stereo.y
     if len(shapes) != 1 or l0.shape != mask.shape:
         raise ValueError("All stereo images and the L0 ROI must have matching shapes")
     problems = [_build_problem(l0, target, mask, values) for target in (r0, l1, r1)]
+    for planar_problem in problems:
+        planar_problem.compute_neural_strain_2d = False
     camera_data = json.loads(_resolve(root, case["camera_pair"]).read_text(encoding="utf-8"))
     problem = backend.PINStereoProblem(*problems, _camera(backend, camera_data["left"]),
                                        _camera(backend, camera_data["right"]))
     reconstruction = values.get("reconstruction", {})
     problem.world_scale = float(reconstruction.get("world_scale", camera_data.get("world_scale", 1.0)))
     problem.require_image_bounds = bool(reconstruction.get("require_image_bounds", True))
+    strain = values.get("traditional_strain", {})
+    problem.compute_traditional_strain = bool(strain.get("enabled", True))
+    problem.traditional_strain_neighbors = int(strain.get("neighbors", 12))
     problem.set_reconstruction_options(float(reconstruction.get("max_reprojection_error_px", 5.0)),
                                        bool(reconstruction.get("require_positive_depth", True)),
                                        int(reconstruction.get("undistort_iterations", 12)))
@@ -153,3 +165,22 @@ def pin_stereo_dic(config: str | Path | Mapping[str, Any] = "config/pin_stereo.y
         _save(result, output if output.is_absolute() else root / output,
               visualization if visualization.is_absolute() else root / visualization)
     return result
+
+
+def run_stereo_case(config: str | Path | Mapping[str, Any] = "config/pin_stereo.yaml") -> list[Any]:
+    """Solve every matched stereo deformation pair and save one 3D strain field per time step."""
+    values = _mapping(config)
+    case = values.get("case", {})
+    root = Path(case.get("root", "."))
+    _, pairs = stereo_image_pairs(_resolve(root, case["left_images"]), _resolve(root, case["right_images"]))
+    base_output = values.get("output", {})
+    results = []
+    for index, (left, _) in enumerate(pairs):
+        current = copy.deepcopy(dict(values))
+        current.setdefault("case", {})["frame"] = index
+        output = current.setdefault("output", {})
+        for key in ("result", "visualization"):
+            if key in base_output:
+                output[key] = str(Path(base_output[key]) / left.stem)
+        results.append(pin_stereo_dic(current))
+    return results

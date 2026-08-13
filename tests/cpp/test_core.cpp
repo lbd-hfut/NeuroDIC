@@ -16,6 +16,7 @@ void test_pin_multi_solver();
 void test_ndef_solver();
 void test_ndef_precalculation();
 void test_random();
+void test_postprocess();
 
 int main() {
     static_assert(static_cast<int>(neurodic::InterpolationDegree::LINEAR) == 1);
@@ -37,6 +38,7 @@ int main() {
     test_ndef_solver();
     test_ndef_precalculation();
     test_random();
+    test_postprocess();
 
     std::cout << "NeuroDIC C++ architecture tests passed\n";
     return 0;

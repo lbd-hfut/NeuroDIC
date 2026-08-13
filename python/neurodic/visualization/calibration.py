@@ -10,6 +10,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from .templates import render_calibration_scene
+
 
 def visualization_dir_for_result(case_root: str | Path, result_dir: str | Path) -> Path:
     case_root = Path(case_root).resolve()
@@ -119,19 +121,8 @@ def visualize_multiview_calibration(
     plt = _plt()
     outputs: dict[str, str] = {}
 
-    fig = plt.figure(figsize=(9, 8))
-    ax = fig.add_subplot(111, projection="3d")
-    if len(points):
-        selected = np.random.RandomState(0).choice(len(points), min(len(points), 30000), replace=False)
-        ax.scatter(*points[selected].T, s=1, c="0.25", alpha=0.55)
-    ax.scatter(*centers.T, c="tab:red", s=45, marker="^")
-    for name, center in zip(names, centers):
-        ax.text(*center, name, fontsize=7)
-    ax.set(xlabel="X", ylabel="Y", zlabel="Z", title="Sparse points and camera poses")
-    fig.tight_layout()
     path = output_dir / "sparse_scene.png"
-    fig.savefig(path, dpi=160)
-    plt.close(fig)
+    render_calibration_scene(centers, points, path, camera_labels=names)
     outputs["sparse_scene"] = str(path)
 
     columns = min(4, max(1, len(names)))

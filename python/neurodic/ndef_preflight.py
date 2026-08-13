@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from .config import load_config
+from .case_io import named_multiview_image_pairs
 from .ndef_paths import camera_name_from_label, ndef_run_roots
 
 
@@ -76,7 +77,12 @@ def inspect_ndef_preflight(config: str | Path | Mapping[str, Any]) -> dict[str, 
         except (OSError, ValueError) as error:
             check("observation_schema", False, str(error))
     image_root = root / case.get("images", "images")
-    image_ok = labels_are_camera_dirs and all((image_root / name / "001.bmp").is_file() for name in names)
+    try:
+        if labels_are_camera_dirs:
+            named_multiview_image_pairs(image_root, names)
+        image_ok = labels_are_camera_dirs
+    except (FileNotFoundError, ValueError):
+        image_ok = False
     check("reference_images", image_ok, str(image_root))
     mask_value = case.get("masks")
     mask_root = (Path(mask_value) if mask_value is not None else result_root / "roi" / "per_camera")

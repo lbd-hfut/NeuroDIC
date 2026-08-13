@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from ..config import load_config
+from ..case_io import named_multiview_image_pairs
 from ..ndef_paths import camera_name_from_label, ndef_run_roots
 from ..models import _require_backend
 
@@ -181,8 +182,9 @@ def _save_fused_surface_visualization(path,fusion,colour_by="visibility"):
 
 def pretrain_ndef_surface(config="config/ndef_multi.yaml"):
     values=load_config(config) if isinstance(config,(str,Path)) else config; case=values["case"]; root=Path(case["root"]); cal=root/case["calibration"]
+    calibration_dir=cal.parent
     payload=json.loads(cal.read_text()); cams,points=_calibration_geometry(payload); names=[camera_name_from_label(x.get("label", ""),f"cam_{index}") for index,x in enumerate(cams)]
-    obs=np.load(root/"result/calibration/observations.npz"); xyz=np.asarray([p["xyz"] for p in points],np.float32)
+    obs=np.load(calibration_dir/"observations.npz"); xyz=np.asarray([p["xyz"] for p in points],np.float32)
     ids=obs["point_indices"].astype(int); ci=obs["cam_indices"].astype(int); uv=obs["uv"].astype(np.float32); R=np.asarray([x["R"] for x in cams],np.float32); t=np.asarray([x["t"] for x in cams],np.float32)
     sparse_filter_cfg=values.get("surface",{}).get("sparse_filter",{}); point_keep,sparse_filter=_filter_sparse_points(points,xyz,sparse_filter_cfg); observation_sparse_keep=point_keep[ids]
     reprojection=_reprojection_diagnostics(cams,xyz,ids,ci,uv)
@@ -219,7 +221,7 @@ def pretrain_ndef_surface(config="config/ndef_multi.yaml"):
     dense_enabled=bool(dense.get("enabled",int(dense.get("iterations",0))>0))
     if dense_enabled:
         import cv2
-        pair_data=json.loads((root/"result/calibration/camera_pairs.json").read_text(encoding="utf-8"))
+        pair_data=json.loads((calibration_dir/"camera_pairs.json").read_text(encoding="utf-8"))
         pair_names=pair_data["camera_names"]
         if pair_names != names: raise ValueError("camera_pairs.json camera_names must match scaled calibration order")
         neighbors=np.full((len(names),2),-1,np.int64)
@@ -228,10 +230,11 @@ def pretrain_ndef_surface(config="config/ndef_multi.yaml"):
             listed=pair_data["neighbors"].get(name,[])
             if len(listed)>2: raise ValueError(f"{name} has more than two topology neighbours")
             neighbors[index,:len(listed)]=[name_to_id[target] for target in listed]
+        reference_paths,_=named_multiview_image_pairs(root/case["images"],names)
         images=[]
-        for name in names:
-            image=cv2.imread(str(root/case["images"]/name/"001.bmp"),cv2.IMREAD_GRAYSCALE)
-            if image is None: raise FileNotFoundError(root/case["images"]/name/"001.bmp")
+        for path in reference_paths:
+            image=cv2.imread(str(path),cv2.IMREAD_GRAYSCALE)
+            if image is None: raise FileNotFoundError(path)
             images.append(image.astype(np.float32)/255.0)
         images=np.stack(images)
         K=np.asarray([x["K"] for x in cams],np.float32); dist=np.asarray([x.get("distortion",[]) for x in cams],np.float32)

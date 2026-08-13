@@ -15,8 +15,8 @@ try:
 except ImportError:
     _neurodic = None
 
-from .api import (calibrate, ndef_dic, ndef_sparse_precalculation, pretrain_ndef_surface, pin_dic,
-                  pin_multi_slover_dic, pin_stereo_dic)
+from .api import (calibrate, ndef_dic, ndef_sparse_precalculation, pretrain_ndef_surface, pin_dic, run_planar_case,
+                  pin_multi_slover_dic, pin_stereo_dic, run_pin_multi_case, run_stereo_case)
 from . import calibration
 from .ndef_roi import NDeFROIOptions, generate_ndef_roi
 from .ndef_preflight import inspect_ndef_preflight
@@ -26,6 +26,7 @@ from .pin_multi_roi import PINMultiPairROIOptions, pin_multi_pair_roi
 from . import seeds
 from . import models
 from .runtime import configure_runtime
+from .config import load_case_config
 
 
 def native_available() -> bool:
@@ -34,6 +35,6 @@ def native_available() -> bool:
 
 
 __all__ = ["calibrate", "calibration", "models", "seeds", "ndef_dic", "ndef_sparse_precalculation", "pretrain_ndef_surface",
-           "NDeFROIOptions", "generate_ndef_roi", "inspect_ndef_preflight", "make_ndef_run_mapping", "pin_dic", "pin_multi_slover_dic",
+           "NDeFROIOptions", "generate_ndef_roi", "inspect_ndef_preflight", "make_ndef_run_mapping", "pin_dic", "run_planar_case", "pin_multi_slover_dic", "run_pin_multi_case", "run_stereo_case",
            "PINMultiPairROIOptions", "pin_multi_pair_roi", "PINMultiFusionOptions",
-           "fuse_pin_multi_surfaces", "pin_stereo_dic", "configure_runtime", "native_available"]
+           "fuse_pin_multi_surfaces", "pin_stereo_dic", "configure_runtime", "load_case_config", "native_available"]

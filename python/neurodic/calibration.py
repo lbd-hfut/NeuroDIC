@@ -739,7 +739,8 @@ def run_stereo_case(case_root: str | Path, config: Optional[str | Path | dict[st
     result = calibrate_stereo_zhang(left_paths, right_paths, board=board, config=cfg)
     result["board"] = board_to_dict(board)
     result["world_scale"] = 1.0
-    result_dir = root / "result" / "calibration"
+    result_subdir = str(cfg.get("outputs", {}).get("result_subdir", "calibration_stereo"))
+    result_dir = root / "result" / result_subdir
     save_json(result, result_dir / "stereo_calibration.json")
     save_json(_camera_pair_dict(result, board), result_dir / "camera_pair.json")
     visualization_dir = visualization_dir_for_result(root, result_dir)

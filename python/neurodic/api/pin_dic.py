@@ -9,9 +9,11 @@ import numpy as np
 import torch
 
 from ..config import load_config
+from ..case_io import planar_image_series
 from ..models import _require_backend
 from ..runtime import configure_runtime
 from ..seeds import initialize_seeds
+from ..visualization import Field2DPanel, render_2d_field_grid
 
 
 def _mapping(config: str | Path | Mapping[str, Any]) -> Mapping[str, Any]:
@@ -59,9 +61,13 @@ def _apply_training(problem, config: Mapping[str, Any]) -> None:
     problem.set_device(str(device))
 
 
-def _write_case_artifacts(case_root: Path, result, output_subdir: str | None) -> None:
-    output = case_root / "result" / "pin"
-    visual = case_root / "visualization" / "pin"
+def _write_case_artifacts(case_root: Path, result, output_subdir: str | None, reference_image: np.ndarray,
+                          output_config: Mapping[str, Any] | None = None) -> None:
+    output_config = output_config or {}
+    output = Path(output_config.get("result", "result/pin"))
+    visual = Path(output_config.get("visualization", "visualization/pin"))
+    output = output if output.is_absolute() else case_root / output
+    visual = visual if visual.is_absolute() else case_root / visual
     if output_subdir is not None:
         name = Path(output_subdir)
         if name.is_absolute() or len(name.parts) != 1 or name.name in {"", ".", ".."}:
@@ -72,19 +78,13 @@ def _write_case_artifacts(case_root: Path, result, output_subdir: str | None) ->
     visual.mkdir(parents=True, exist_ok=True)
     xy = result.displacement.coordinates.numpy()
     uv = result.displacement.values.numpy()
-    np.savez(output / "pin_result.npz", coordinates=xy, displacement=uv,
+    strain = result.strain.values.numpy()
+    np.savez(output / "pin_result.npz", coordinates=xy, displacement=uv, strain=strain,
+             strain_components=np.asarray(["E_xx", "E_yy", "E_xy"]),
              iterations=result.diagnostics.iterations, final_loss=result.diagnostics.final_loss)
-    import matplotlib.pyplot as plt
-
-    figure, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
-    for axis, index, label in zip(axes, (0, 1), ("u displacement", "v displacement")):
-        image = np.full((1280, 1280), np.nan, dtype=np.float32)
-        image[xy[:, 1].astype(int), xy[:, 0].astype(int)] = uv[:, index]
-        rendered = axis.imshow(image, cmap="turbo")
-        axis.set_title(label)
-        figure.colorbar(rendered, ax=axis)
-    figure.savefig(visual / "pin_displacement.png", dpi=160)
-    plt.close(figure)
+    panels = [Field2DPanel(reference_image, xy, uv[:, index], label, label, symmetric=True)
+              for index, label in enumerate(("u displacement", "v displacement"))]
+    render_2d_field_grid(panels, visual / "pin_displacement.png", rows=1, columns=2, alpha=.9)
 
 
 def _build_problem(reference_array, deformed_array, mask_array, values, seeds=None):
@@ -107,8 +107,10 @@ def pin_dic(reference, deformed=None, roi_mask=None, config: str | Path | Mappin
             *, seeds=None, write_case_artifacts: bool = True, output_subdir: str | None = None):
     """Run the C++ planar PIN-DIC pipeline.
 
-    ``reference`` may be a case directory containing ``001.bmp``, ``002.bmp``, and
-    ``003.bmp``. Otherwise all three observations are NumPy arrays (or tensors).
+    ``reference`` may be a case directory.  Its first sorted image is the
+    reference, its final sorted image is the ROI, and ``case.frame`` selects
+    one of the intervening deformed frames.  Otherwise all three observations
+    are NumPy arrays (or tensors).
     """
     backend = _require_backend()
     values = _mapping(config)
@@ -117,9 +119,19 @@ def pin_dic(reference, deformed=None, roi_mask=None, config: str | Path | Mappin
     if case_root is not None:
         import cv2
 
-        reference = cv2.imread(str(case_root / "001.bmp"), cv2.IMREAD_GRAYSCALE)
-        deformed = cv2.imread(str(case_root / "002.bmp"), cv2.IMREAD_GRAYSCALE)
-        roi_mask = cv2.imread(str(case_root / "003.bmp"), cv2.IMREAD_GRAYSCALE) != 0
+        case = values.get("case", {})
+        reference_path, deformed_paths, roi_path = planar_image_series(case_root, case.get("images_dir", "."))
+        frame = int(case.get("frame", 0))
+        try:
+            deformed_path = deformed_paths[frame]
+        except IndexError as error:
+            raise ValueError(f"case.frame {frame} is outside the {len(deformed_paths)} planar deformed frames") from error
+        reference = cv2.imread(str(reference_path), cv2.IMREAD_GRAYSCALE)
+        deformed = cv2.imread(str(deformed_path), cv2.IMREAD_GRAYSCALE)
+        roi = cv2.imread(str(roi_path), cv2.IMREAD_GRAYSCALE)
+        if reference is None or deformed is None or roi is None:
+            raise ValueError("Unable to read planar image sequence or ROI")
+        roi_mask = roi != 0
     if deformed is None or roi_mask is None:
         raise ValueError("deformed image and roi_mask are required unless reference is a case directory")
     reference_array = np.asarray(reference, dtype=np.float32)
@@ -130,5 +142,21 @@ def pin_dic(reference, deformed=None, roi_mask=None, config: str | Path | Mappin
     problem = _build_problem(reference_array, deformed_array, mask_array, values, seeds)
     result = backend.PINSolver().solve(problem)
     if case_root is not None and write_case_artifacts:
-        _write_case_artifacts(case_root, result, output_subdir)
+        _write_case_artifacts(case_root, result, output_subdir, reference_array, values.get("output", {}))
     return result
+
+
+def run_planar_case(config: str | Path | Mapping[str, Any] = "config/pin_2d.yaml") -> list[Any]:
+    """Solve every deformed image discovered between a planar reference and ROI."""
+    import copy
+
+    values = _mapping(config)
+    case = values.get("case", {})
+    root = Path(case.get("root", "."))
+    _, deformed, _ = planar_image_series(root, case.get("images_dir", "."))
+    results = []
+    for index, path in enumerate(deformed):
+        current = copy.deepcopy(dict(values))
+        current.setdefault("case", {})["frame"] = index
+        results.append(pin_dic(root, config=current, output_subdir=path.stem))
+    return results

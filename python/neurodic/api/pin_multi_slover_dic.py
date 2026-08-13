@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import copy
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -17,6 +18,7 @@ import numpy as np
 
 from ..models import _require_backend
 from ..pin_multi_quality import compute_pair_reason_codes, pair_quality_summary
+from ..case_io import multiview_image_pairs, named_multiview_image_pairs
 from ..pin_multi_roi import camera_name_from_label, pin_multi_pair_roi
 from ..runtime import configure_runtime
 from .pin_dic import _build_problem, _mapping
@@ -30,18 +32,6 @@ def _cameras_by_name(calibration: Mapping[str, Any]) -> dict[str, dict[str, Any]
     return cameras
 
 
-def _frame_paths(image_root: Path, camera_name: str, reference_frame: str, frame: int) -> tuple[Path, Path]:
-    files = sorted(path for path in (image_root / camera_name).iterdir() if path.is_file())
-    if len(files) < 2:
-        raise ValueError(f"Camera {camera_name} requires a reference and a current image, found {len(files)}")
-    names = [path.name for path in files]
-    reference_index = names.index(reference_frame) if reference_frame in names else 0
-    current_index = frame if frame >= 0 else len(files) - 1
-    if not (0 <= current_index < len(files)):
-        raise ValueError(f"Camera {camera_name} current frame index {current_index} out of range for {names}")
-    return files[reference_index], files[current_index]
-
-
 def _save_scatter(path: Path, points: np.ndarray, valid: np.ndarray, title: str) -> None:
     import matplotlib.pyplot as plt
 
@@ -52,6 +42,40 @@ def _save_scatter(path: Path, points: np.ndarray, valid: np.ndarray, title: str)
     figure.colorbar(rendered, ax=axis, label="Z")
     figure.savefig(path, dpi=160)
     plt.close(figure)
+
+
+def _save_reconstruction_roi_fields(directory: Path, xy: np.ndarray, reference: np.ndarray,
+                                    current: np.ndarray, valid: np.ndarray, *,
+                                    roi_mask: np.ndarray | None, image_size: tuple[int, int] | None,
+                                    pair_id: str) -> None:
+    """Render reconstructed world coordinates on the left-camera ROI grid."""
+    import matplotlib.pyplot as plt
+
+    width, height = image_size if image_size is not None else (
+        int(xy[:, 0].max()) + 1, int(xy[:, 1].max()) + 1)
+    def field(values: np.ndarray, component: int) -> np.ndarray:
+        image = np.full((height, width), np.nan, dtype=np.float64)
+        inside = valid & (xy[:, 0] >= 0) & (xy[:, 0] < width) & (xy[:, 1] >= 0) & (xy[:, 1] < height)
+        image[xy[inside, 1], xy[inside, 0]] = values[inside, component]
+        if roi_mask is not None:
+            image[~roi_mask] = np.nan
+        return image
+    for name, points, state in (("reference", reference, "reference"), ("current", current, "current")):
+        figure, axes = plt.subplots(1, 3, figsize=(16, 5), constrained_layout=True)
+        for axis, component, label in zip(axes, range(3), ("X", "Y", "Z")):
+            rendered = axis.imshow(field(points, component), cmap="turbo")
+            axis.set_title(f"{pair_id} {state} reconstruction: {label} (world)")
+            axis.set_axis_off(); figure.colorbar(rendered, ax=axis, label=f"{label} (world)")
+        figure.savefig(directory / f"{name}_roi_xyz.png", dpi=170); plt.close(figure)
+        figure = plt.figure(figsize=(8, 7), constrained_layout=True)
+        axis = figure.add_subplot(projection="3d")
+        plotted = axis.scatter(points[valid, 0], points[valid, 1], points[valid, 2],
+                               c=points[valid, 2], s=0.5, cmap="turbo")
+        axis.set(xlabel="X (world)", ylabel="Y (world)", zlabel="Z (world)",
+                 title=f"{pair_id} {state} reconstructed surface")
+        axis.set_box_aspect(np.maximum(np.ptp(points[valid], axis=0), 1e-8))
+        figure.colorbar(plotted, ax=axis, shrink=.72, label="Z (world)")
+        figure.savefig(directory / f"{name}_surface_3d.png", dpi=170); plt.close(figure)
 
 
 def _save_pair_result(pair_result, result_root: Path, visualization_root: Path, *,
@@ -88,9 +112,27 @@ def _save_pair_result(pair_result, result_root: Path, visualization_root: Path, 
              reprojection_error=result.current_reprojection_error.numpy())
     _save_scatter(vis_reconstruct_dir / "reference.png", reference, valid, f"{pair_id} reference shape (Z)")
     _save_scatter(vis_reconstruct_dir / "current.png", current, valid, f"{pair_id} current shape (Z)")
+    _save_reconstruction_roi_fields(vis_reconstruct_dir, result.left_reference_coordinates.numpy().astype(np.int64),
+                                    reference, current, valid, roi_mask=roi_mask, image_size=image_size,
+                                    pair_id=pair_id)
     displacement = result.displacement_3d.numpy()
+    import torch
+    closure = _require_backend().compute_local_displacement_consistency(
+        torch.as_tensor(reference, dtype=torch.float64), torch.as_tensor(displacement, dtype=torch.float64),
+        torch.as_tensor(valid, dtype=torch.bool), 16, 5.0)
+    closure_residual = closure.residual.numpy()
+    closure_inlier = closure.inlier_mask.numpy().astype(bool)
+    filtered_valid = valid & closure_inlier
     np.savez(deformation_dir / "initial_to_current.npz", coordinates=result.left_reference_coordinates.numpy(),
              reference_points=reference, current_points=current, displacement=displacement, valid=valid)
+    np.savez(deformation_dir / "closure_quality.npz", coordinates=result.left_reference_coordinates.numpy(),
+             residual=closure_residual, predicted_displacement=closure.predicted_displacement.numpy(),
+             valid=valid, inlier=closure_inlier, filtered_valid=filtered_valid,
+             residual_median=closure.residual_median, residual_mad=closure.residual_mad,
+             residual_threshold=closure.residual_threshold, k_neighbors=np.asarray(16), mad_factor=np.asarray(5.0))
+    np.savez(deformation_dir / "initial_to_current_filtered.npz", coordinates=result.left_reference_coordinates.numpy(),
+             reference_points=reference, current_points=current, displacement=displacement,
+             valid=filtered_valid, closure_residual=closure_residual)
     import matplotlib.pyplot as plt
 
     xy = result.left_reference_coordinates.numpy().astype(np.int64)
@@ -101,12 +143,26 @@ def _save_pair_result(pair_result, result_root: Path, visualization_root: Path, 
         figure.colorbar(rendered, ax=axis)
     figure.savefig(vis_deformation_dir / "initial_to_current.png", dpi=160)
     plt.close(figure)
+    figure, axes = plt.subplots(1, 2, figsize=(11, 5), constrained_layout=True)
+    residual_image = _field_image(xy, closure_residual[:, None], valid, 0)
+    rendered = axes[0].imshow(residual_image, cmap="magma")
+    axes[0].set_title("Local 3D closure residual"); figure.colorbar(rendered, ax=axes[0], label="world displacement residual")
+    mask_image = _field_image(xy, filtered_valid[:, None].astype(np.float64), valid, 0)
+    axes[1].imshow(mask_image, cmap="gray", vmin=0.0, vmax=1.0)
+    axes[1].set_title("Closure inlier mask (white = retained)")
+    figure.savefig(vis_deformation_dir / "closure_quality.png", dpi=170)
+    plt.close(figure)
     count = int(valid.sum())
     stats: dict[str, Any] = {
         "pair_id": pair_id,
         "total_points": int(valid.size),
         "valid_points": count,
         "valid_ratio": float(count / valid.size) if valid.size else 0.0,
+        "closure_inliers": int(filtered_valid.sum()),
+        "closure_rejected": int((valid & ~closure_inlier).sum()),
+        "closure_residual_median": float(closure.residual_median),
+        "closure_residual_mad": float(closure.residual_mad),
+        "closure_residual_threshold": float(closure.residual_threshold),
     }
     if count:
         stats["reference_mean_reprojection_error_px"] = float(
@@ -170,7 +226,6 @@ def pin_multi_slover_dic(
     case = values.get("case", {})
     root = Path(case.get("root", "."))
     image_root = root / str(case.get("images", "images"))
-    reference_frame = str(case.get("reference_frame", "001.bmp"))
     frame = int(case.get("frame", -1))
 
     roi_result = pin_multi_pair_roi(values)
@@ -185,6 +240,14 @@ def pin_multi_slover_dic(
     calibration_path = calibration_path if calibration_path.is_absolute() else root / calibration_path
     calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
     cameras = _cameras_by_name(calibration)
+    names = sorted(cameras)
+    references, deformed_frames = named_multiview_image_pairs(image_root, names)
+    try:
+        current_paths = deformed_frames[frame]
+    except IndexError as error:
+        raise ValueError(f"case.frame {frame} is outside the {len(deformed_frames)} multi-view deformed frames") from error
+    reference_paths = dict(zip(names, references))
+    current_paths_by_name = dict(zip(names, current_paths))
 
     reconstruction = values.get("reconstruction", {})
     problem = backend.PINMultiProblem()
@@ -200,8 +263,8 @@ def pin_multi_slover_dic(
     for left, right, pair_id in ready:
         if left not in cameras or right not in cameras:
             raise ValueError(f"Calibration missing camera label for pair {pair_id}")
-        l0_path, lk_path = _frame_paths(image_root, left, reference_frame, frame)
-        r0_path, rk_path = _frame_paths(image_root, right, reference_frame, frame)
+        l0_path, lk_path = reference_paths[left], current_paths_by_name[left]
+        r0_path, rk_path = reference_paths[right], current_paths_by_name[right]
         l0, r0, lk, rk = (_read_gray(path) for path in (l0_path, r0_path, lk_path, rk_path))
         mask_path = roi_result.output_root / pair_id / "left_mask.npy"
         mask = np.load(mask_path) != 0
@@ -210,6 +273,8 @@ def pin_multi_slover_dic(
             raise ValueError(f"Pair {pair_id}: all four images and the left ROI mask must share one shape")
         problems = [_build_problem(l0, target, mask, pin_values)
                     for target in (r0, lk, rk)]
+        for planar_problem in problems:
+            planar_problem.compute_neural_strain_2d = False
         problem.add_pair(pair_id, problems[0], problems[1], problems[2],
                          _camera(backend, cameras[left]), _camera(backend, cameras[right]))
         pair_frames.append({"pair_id": pair_id, "left": left, "right": right,
@@ -236,7 +301,7 @@ def pin_multi_slover_dic(
         solve = {
             "stage": "pairwise_solve",
             "world_scale": problem.world_scale,
-            "reference_frame": reference_frame,
+            "reference_selection": "first image in every view directory",
             "current_frame": frame,
             "pairs": pair_stats,
         }
@@ -250,3 +315,26 @@ def pin_multi_slover_dic(
             manifest["fusion"] = fusion_summary
             roi_result.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return result
+
+
+def run_pin_multi_case(config: str | Path | Mapping[str, Any] = "config/pin_multi.yaml") -> list[Any]:
+    """Solve, fuse, and compute traditional 3D strain for every multiview time step."""
+    values = _mapping(config)
+    case = values.get("case", {})
+    root = Path(case.get("root", "."))
+    _, _, frames = multiview_image_pairs(root / str(case.get("images", "images")))
+    base_output = values.get("output", {})
+    base_pair_roi = values.get("pair_roi", {}).get("output")
+    results = []
+    for index, frame_paths in enumerate(frames):
+        current = copy.deepcopy(dict(values))
+        current.setdefault("case", {})["frame"] = index
+        namespace = frame_paths[0].stem
+        output = current.setdefault("output", {})
+        for key in ("result", "visualization"):
+            if key in base_output:
+                output[key] = str(Path(base_output[key]) / namespace)
+        if base_pair_roi is not None:
+            current.setdefault("pair_roi", {})["output"] = str(Path(base_pair_roi) / namespace)
+        results.append(pin_multi_slover_dic(current))
+    return results

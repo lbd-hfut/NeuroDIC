@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from neurodic.api.pin_multi_slover_dic import pin_multi_slover_dic
-from neurodic.pin_multi_fusion import _surface_inlier_mask, fuse_pin_multi_surfaces
+from neurodic.pin_multi_fusion import fuse_pin_multi_surfaces
 from synthetic_dic_data import synthetic_multiview_case
 
 
@@ -20,13 +20,17 @@ def _enable_fusion(config: dict, **kwargs: object) -> dict:
 
 
 def test_surface_cleaning_rejects_an_isolated_point() -> None:
+    import torch
+    from neurodic.models import _require_backend
+
     x, y = np.meshgrid(np.arange(5, dtype=np.float64), np.arange(5, dtype=np.float64))
     surface = np.column_stack((x.ravel(), y.ravel(), np.zeros(x.size)))
     points = np.vstack((surface, np.array([[100.0, 100.0, 100.0]])))
-    keep, metrics = _surface_inlier_mask(points, k_neighbors=4, mad_factor=5.0)
+    cleaned = _require_backend().clean_pin_multi_surface(torch.from_numpy(points), 4, 5.0)
+    keep = cleaned.inlier_mask.numpy()
     assert keep[:-1].all()
     assert not keep[-1]
-    assert metrics["surface_neighbor_distance_threshold_mm"] is not None
+    assert cleaned.neighbor_distance_threshold > 0.0
 
 
 def test_fusion_disabled_by_default_does_not_write_fused(tmp_path: Path) -> None:
@@ -52,7 +56,7 @@ def test_fusion_deduplicates_and_keeps_provenance(tmp_path: Path) -> None:
         valid = np.asarray(reference["valid"]).astype(bool) & np.asarray(current["valid"]).astype(bool)
         input_points += int(valid.sum())
 
-    for name in ("reference_surface.npz", "current_surface.npz", "deformation.npz"):
+    for name in ("reference_surface.npz", "current_surface.npz", "deformation.npz", "strain.npz"):
         assert (fused_root / name).exists(), name
     summary = json.loads((fused_root / "summary.json").read_text(encoding="utf-8"))
     assert summary["selected_points"] <= input_points
@@ -70,6 +74,9 @@ def test_fusion_deduplicates_and_keeps_provenance(tmp_path: Path) -> None:
     assert len(np.unique(cells, axis=0)) == summary["selected_points"]
     assert summary["deduplicated_points"] == summary["post_filter_points"] - summary["voxel_selected_points"]
     assert summary["selected_points"] == summary["voxel_selected_points"] - summary["removed_by_surface"]
+    strain = np.load(fused_root / "strain.npz")
+    assert strain["strain"].shape == (summary["selected_points"], 6)
+    assert np.array_equal(strain["valid"], np.isfinite(strain["strain"]).all(axis=1))
 
     manifest = json.loads((result_root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["fusion"]["selected_points"] == summary["selected_points"]

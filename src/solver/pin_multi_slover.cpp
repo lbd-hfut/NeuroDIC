@@ -19,6 +19,9 @@ PINMultiResult PINMultiSolver::solve(const PINMultiProblem& problem) const {
         stereo.world_scale = problem.world_scale;
         stereo.require_image_bounds = problem.require_image_bounds;
         stereo.reconstruction = problem.reconstruction;
+        // Pair fields are an intermediate reconstruction product.  Estimate
+        // traditional strain only after the pair surfaces have been fused.
+        stereo.compute_traditional_strain = false;
         result.pairs.push_back({pair.pair_id, stereo_solver.solve(stereo)});
     }
     return result;

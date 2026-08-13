@@ -1,6 +1,7 @@
 #include "neurodic/solver/pin_solver.hpp"
 
 #include <algorithm>
+#include <limits>
 
 #include "neurodic/core/exceptions.hpp"
 #include "neurodic/interpolation/torch_bspline.hpp"
@@ -8,6 +9,7 @@
 #include "neurodic/loss/photometric.hpp"
 #include "neurodic/model/model_factory.hpp"
 #include "neurodic/optimizer/adam.hpp"
+#include "neurodic/postprocess/strain.hpp"
 #include "neurodic/representation/pin_displacement_field.hpp"
 
 namespace neurodic {
@@ -21,10 +23,23 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
     model->train();
     const auto height = problem.reference_image.size(0);
     const auto width = problem.reference_image.size(1);
-    auto normalize_coordinates = [height, width](const torch::Tensor& xy) {
-        auto scale = torch::tensor({static_cast<float>(std::max<int64_t>(width - 1, 1)),
-                                    static_cast<float>(std::max<int64_t>(height - 1, 1))}, xy.options());
-        return xy / scale * 2.0F - 1.0F;
+    auto roi_indices = torch::nonzero(problem.roi_mask).to(torch::kCPU);
+    if (roi_indices.size(0) == 0) throw ValidationError("PINProblem ROI has no valid pixels");
+    // PIN fields are pair/local-image fields.  Unlike the multi-view NDeF
+    // model, each field uses the occupied ROI bounding rectangle as its input
+    // domain, so the available [-1, 1]^2 range is not wasted by pixels outside
+    // its ROI.  `roi_indices` are [y, x], whereas field coordinates are [x, y].
+    const auto xmin = roi_indices.select(1, 1).min().item<float>();
+    const auto xmax = roi_indices.select(1, 1).max().item<float>();
+    const auto ymin = roi_indices.select(1, 0).min().item<float>();
+    const auto ymax = roi_indices.select(1, 0).max().item<float>();
+    auto roi_origin = torch::tensor({xmin, ymin}, torch::kFloat32);
+    auto roi_extent = torch::tensor({std::max(xmax - xmin, 1.0F),
+                                     std::max(ymax - ymin, 1.0F)}, torch::kFloat32);
+    auto normalize_coordinates = [roi_origin, roi_extent](const torch::Tensor& xy) {
+        auto origin = roi_origin.to(xy.device(), xy.scalar_type());
+        auto extent = roi_extent.to(xy.device(), xy.scalar_type());
+        return (xy - origin) / extent * 2.0F - 1.0F;
     };
     auto seed_pos = problem.seeds.seed_pos.to(device, dtype);
     auto seed_uv = problem.seeds.seed_uv.to(device, dtype);
@@ -51,8 +66,6 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
         iterations += run.iterations;
     }
 
-    auto roi_indices = torch::nonzero(problem.roi_mask).to(torch::kCPU);
-    if (roi_indices.size(0) == 0) throw ValidationError("PINProblem ROI has no valid pixels");
     auto all_xy = torch::stack({roi_indices.select(1, 1), roi_indices.select(1, 0)}, 1).to(device, dtype);
     TorchBSplineInterpolator sampler(problem.precompute.deformed_coefficients.degree);
     auto reference_coefficients = problem.precompute.reference_coefficients.on(device).to(dtype);
@@ -112,9 +125,15 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
         iterations += run.iterations;
     }
     model->eval();
+    // The network takes normalized pixel coordinates and returns normalized
+    // displacement.  Differentiating the full decode(xy) restores both scales.
+    auto strain = problem.compute_neural_strain_2d
+        ? compute_neural_strain_2d(decode, all_xy)
+        : torch::full({all_xy.size(0), 3}, std::numeric_limits<double>::quiet_NaN(), all_xy.options());
     torch::NoGradGuard no_grad;
     auto values = decode(all_xy).detach().to(torch::kCPU);
     result.displacement = {all_xy.detach().to(torch::kCPU), values};
+    result.strain = {all_xy.detach().to(torch::kCPU), strain.to(torch::kCPU)};
     result.diagnostics.status = SolverStatus::CONVERGED;
     result.diagnostics.iterations = iterations;
     result.diagnostics.final_loss = final_loss;
@@ -124,6 +143,13 @@ PINResult PINSolver::solve(const PINProblem& problem) const {
     result.diagnostics.metrics["seed_uv_scale_u"] = seed_scales[0].item<double>();
     result.diagnostics.metrics["seed_uv_scale_v"] = seed_scales[1].item<double>();
     result.diagnostics.metrics["photometric_sampling_enabled"] = problem.photometric_sampling_enabled ? 1.0 : 0.0;
+    result.diagnostics.metrics["coordinate_normalization"] = 1.0;  // ROI bounding rectangle.
+    result.diagnostics.metrics["roi_bbox_xmin"] = xmin;
+    result.diagnostics.metrics["roi_bbox_xmax"] = xmax;
+    result.diagnostics.metrics["roi_bbox_ymin"] = ymin;
+    result.diagnostics.metrics["roi_bbox_ymax"] = ymax;
+    result.diagnostics.metrics["roi_bbox_width"] = xmax - xmin + 1.0;
+    result.diagnostics.metrics["roi_bbox_height"] = ymax - ymin + 1.0;
     return result;
 }
 

@@ -132,9 +132,3 @@ scale:
   max_reprojection_error: 3.0
   trim_fraction: 0.20
   min_common_corners: 12
-
-outputs:
-  # Named result subdirectory under <case_root>/result/. Keeps the migrated
-  # exhaustive/staged self-calibration output separate from the previous
-  # windowed-matching baseline in <case_root>/result/calibration/.
-  result_subdir: calibration_final
