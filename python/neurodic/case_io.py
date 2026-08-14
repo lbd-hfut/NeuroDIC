@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-_IMAGE_SUFFIXES = {".bmp", ".dib", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+_IMAGE_SUFFIXES = {".bmp", ".dib", ".jpeg", ".jpg", ".png", ".pgm", ".tif", ".tiff"}
 
 
 def image_files(directory: str | Path) -> list[Path]:

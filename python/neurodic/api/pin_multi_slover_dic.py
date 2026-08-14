@@ -206,6 +206,84 @@ def _pin_2d_config(values: Mapping[str, Any]) -> Mapping[str, Any]:
     return _mapping(source)
 
 
+def _add_resolved_pair(problem, *, backend, pair_id: str, reference_camera: str,
+                       secondary_camera: str, l0_path: Path, r0_path: Path,
+                       lk_path: Path, rk_path: Path, left_mask_path: Path,
+                       cameras: Mapping[str, Any], pin_values: Mapping[str, Any],
+                       max_reprojection_error_px: float) -> dict[str, Any]:
+    """Shared one-pair scientific assembly; it never selects inputs or writes manifests."""
+    l0, r0, lk, rk = (_read_gray(path) for path in (l0_path, r0_path, lk_path, rk_path))
+    mask = np.load(left_mask_path) != 0
+    if len({image.shape for image in (l0, r0, lk, rk)}) != 1 or l0.shape != mask.shape:
+        raise ValueError("Pair images and supplied left ROI mask must share one shape")
+    fields = [_build_problem(l0, target, mask, pin_values) for target in (r0, lk, rk)]
+    for field in fields: field.compute_neural_strain_2d = False
+    problem.add_pair(pair_id, fields[0], fields[1], fields[2],
+                     _camera(backend, cameras[reference_camera]), _camera(backend, cameras[secondary_camera]))
+    return {"roi_mask": mask, "image_size": (int(l0.shape[1]), int(l0.shape[0])),
+            "max_reprojection_error_px": max_reprojection_error_px}
+
+
+def solve_pin_multi_pair(config: str | Path | Mapping[str, Any], *, pair_id: str,
+                         reference_camera: str, secondary_camera: str,
+                         selected_frame: int, pair_roi_dir: str | Path,
+                         calibration_path: str | Path, result_root: str | Path,
+                         visualization_root: str | Path):
+    """Solve exactly one ordered PIN Multi pair using a supplied ROI artifact.
+
+    This deliberately has no pair selection, ROI generation, manifest mutation,
+    or fusion side effects.  ``selected_frame`` is an exact non-negative index.
+    """
+    if selected_frame < 0:
+        raise ValueError("selected_frame must be an explicit non-negative index")
+    if pair_id != f"{reference_camera}__{secondary_camera}":
+        raise ValueError("pair_id must preserve reference_camera__secondary_camera order")
+    values = _mapping(config); configure_runtime(values)
+    case = values.get("case", {}); root = Path(case.get("root", ".")).resolve()
+    calibration_file = Path(calibration_path).resolve()
+    calibration = json.loads(calibration_file.read_text(encoding="utf-8"))
+    cameras = _cameras_by_name(calibration)
+    if reference_camera not in cameras or secondary_camera not in cameras:
+        raise ValueError("Calibration lacks one or more explicitly requested pair cameras")
+    roi_root = Path(pair_roi_dir).resolve(); mask_path = roi_root / "left_mask.npy"
+    if not mask_path.is_file():
+        raise ValueError("Provided pair ROI lacks required left_mask.npy")
+    image_root = root / str(case.get("images", "images"))
+    names = sorted(cameras)
+    references, frames = named_multiview_image_pairs(image_root, names)
+    if selected_frame >= len(frames):
+        raise ValueError("selected_frame is outside the resolved multi-view frames")
+    reference_paths = dict(zip(names, references)); current_paths = dict(zip(names, frames[selected_frame]))
+    l0_path, r0_path = reference_paths[reference_camera], reference_paths[secondary_camera]
+    lk_path, rk_path = current_paths[reference_camera], current_paths[secondary_camera]
+    backend = _require_backend(); pin_values = _pin_2d_config(values)
+    problem = backend.PINMultiProblem()
+    reconstruction = values.get("reconstruction", {})
+    problem.world_scale = float(reconstruction.get("world_scale", 1.0))
+    problem.require_image_bounds = bool(reconstruction.get("require_image_bounds", True))
+    problem.set_reconstruction_options(float(reconstruction.get("max_reprojection_error_px", 5.0)),
+                                       bool(reconstruction.get("require_positive_depth", True)),
+                                       int(reconstruction.get("undistort_iterations", 12)))
+    context = _add_resolved_pair(problem, backend=backend, pair_id=pair_id,
+                                 reference_camera=reference_camera, secondary_camera=secondary_camera,
+                                 l0_path=l0_path, r0_path=r0_path, lk_path=lk_path, rk_path=rk_path,
+                                 left_mask_path=mask_path, cameras=cameras, pin_values=pin_values,
+                                 max_reprojection_error_px=float(reconstruction.get("max_reprojection_error_px", 5.0)))
+    result = backend.PINMultiSolver().solve(problem)
+    if len(result.pairs) != 1 or result.pairs[0].pair_id != pair_id:
+        raise ValueError("Native PIN Multi solver did not return the requested ordered pair")
+    out, vis = Path(result_root).resolve(), Path(visualization_root).resolve()
+    stats = _save_pair_result(result.pairs[0], out, vis, **context)
+    metadata = {"schema_version": "neurodic.pin_multi.pair_solve_quality/v1", "pair_id": pair_id,
+                "reference_camera": reference_camera, "secondary_camera": secondary_camera,
+                "selected_frame": selected_frame, "roi_required_artifacts": ["left_mask.npy"],
+                "calibration": str(calibration_file), "summary": stats}
+    metadata_path = out / "pairs" / pair_id / "pair_metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return result.pairs[0]
+
+
 def pin_multi_slover_dic(
     config: str | Path | Mapping[str, Any] = "config/pin_multi.yaml",
     *,
@@ -265,26 +343,15 @@ def pin_multi_slover_dic(
             raise ValueError(f"Calibration missing camera label for pair {pair_id}")
         l0_path, lk_path = reference_paths[left], current_paths_by_name[left]
         r0_path, rk_path = reference_paths[right], current_paths_by_name[right]
-        l0, r0, lk, rk = (_read_gray(path) for path in (l0_path, r0_path, lk_path, rk_path))
         mask_path = roi_result.output_root / pair_id / "left_mask.npy"
-        mask = np.load(mask_path) != 0
-        shapes = {image.shape for image in (l0, r0, lk, rk)}
-        if len(shapes) != 1 or l0.shape != mask.shape:
-            raise ValueError(f"Pair {pair_id}: all four images and the left ROI mask must share one shape")
-        problems = [_build_problem(l0, target, mask, pin_values)
-                    for target in (r0, lk, rk)]
-        for planar_problem in problems:
-            planar_problem.compute_neural_strain_2d = False
-        problem.add_pair(pair_id, problems[0], problems[1], problems[2],
-                         _camera(backend, cameras[left]), _camera(backend, cameras[right]))
+        pair_context[pair_id] = _add_resolved_pair(problem, backend=backend, pair_id=pair_id,
+                                                    reference_camera=left, secondary_camera=right,
+                                                    l0_path=l0_path, r0_path=r0_path, lk_path=lk_path, rk_path=rk_path,
+                                                    left_mask_path=mask_path, cameras=cameras, pin_values=pin_values,
+                                                    max_reprojection_error_px=float(reconstruction.get("max_reprojection_error_px", 5.0)))
         pair_frames.append({"pair_id": pair_id, "left": left, "right": right,
                             "reference": str(l0_path.name), "current": str(lk_path.name),
                             "left_mask": str(mask_path)})
-        pair_context[pair_id] = {
-            "roi_mask": mask,
-            "image_size": (int(l0.shape[1]), int(l0.shape[0])),
-            "max_reprojection_error_px": float(reconstruction.get("max_reprojection_error_px", 5.0)),
-        }
 
     result = backend.PINMultiSolver().solve(problem)
     if write_case_artifacts:

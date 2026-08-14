@@ -17,3 +17,17 @@ def test_binding_import_smoke() -> None:
     assert hasattr(backend, "PINStereoProblem")
     assert hasattr(backend, "PINStereoSolver")
     assert hasattr(backend, "PINStereoResult")
+
+
+def test_ndef_deformation_binding_capability() -> None:
+    if not neurodic.native_available():
+        return
+    from neurodic.agent.adapters.execution_ndef_deformation import (
+        ndef_deformation_backend_capability,
+    )
+
+    capability = ndef_deformation_backend_capability()
+    assert capability["available"] is True
+    assert capability["exception"] is None
+    assert capability["missing_symbols"] == []
+    assert all(record["present"] for record in capability["symbols"].values())

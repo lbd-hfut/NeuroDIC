@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -29,6 +29,18 @@ class PINMultiFusionOptions:
     traditional_strain_neighbors: int = 12
 
 
+@dataclass(frozen=True)
+class PINMultiManagedPairInput:
+    """One ordered, explicit pair input for managed fusion.
+
+    This boundary intentionally carries only the two reconstruction products
+    consumed by fusion.  It never discovers pair directories or quality files.
+    """
+    pair_id: str
+    reference_reconstruction: Path
+    current_reconstruction: Path
+
+
 def _options_from_config(values: Mapping[str, Any]) -> PINMultiFusionOptions:
     fusion = values.get("fusion", {})
     return PINMultiFusionOptions(
@@ -42,6 +54,23 @@ def _options_from_config(values: Mapping[str, Any]) -> PINMultiFusionOptions:
     )
 
 
+def _pair_product(pair_id: str, reference_path: Path, current_path: Path) -> dict[str, Any]:
+    """Load precisely the reconstruction fields consumed by the shared core."""
+    with np.load(reference_path, allow_pickle=False) as reference, np.load(current_path, allow_pickle=False) as current:
+        required = {"points", "valid", "reprojection_error"}
+        if required - set(reference.files) or required - set(current.files):
+            raise ValueError(f"fusion pair {pair_id} lacks required reconstruction fields")
+        valid = np.asarray(reference["valid"]).astype(bool) & np.asarray(current["valid"]).astype(bool)
+        reprojection = np.maximum(np.asarray(reference["reprojection_error"], dtype=np.float64),
+                                  np.asarray(current["reprojection_error"], dtype=np.float64))
+        reference_points = np.asarray(reference["points"], dtype=np.float64)
+        current_points = np.asarray(current["points"], dtype=np.float64)
+    if reference_points.ndim != 2 or reference_points.shape[1:] != (3,) or current_points.shape != reference_points.shape or valid.ndim != 1 or reprojection.shape != valid.shape or valid.size != reference_points.shape[0]:
+        raise ValueError(f"fusion pair {pair_id} has incompatible reconstruction shapes")
+    return {"reference_points": reference_points[valid], "current_points": current_points[valid],
+            "reprojection_error": reprojection[valid]}
+
+
 def _load_pair_products(pairs_root: Path, max_reprojection_error_px: float) -> dict[str, dict[str, Any]]:
     products: dict[str, dict[str, Any]] = {}
     if not pairs_root.exists():
@@ -53,17 +82,39 @@ def _load_pair_products(pairs_root: Path, max_reprojection_error_px: float) -> d
         current_path = pair_dir / "reconstruct" / "current.npz"
         if not reference_path.exists() or not current_path.exists():
             continue
-        reference = np.load(reference_path)
-        current = np.load(current_path)
-        valid = np.asarray(reference["valid"]).astype(bool) & np.asarray(current["valid"]).astype(bool)
-        reprojection = np.maximum(np.asarray(reference["reprojection_error"], dtype=np.float64),
-                                  np.asarray(current["reprojection_error"], dtype=np.float64))
-        products[pair_dir.name] = {
-            "reference_points": np.asarray(reference["points"], dtype=np.float64)[valid],
-            "current_points": np.asarray(current["points"], dtype=np.float64)[valid],
-            "reprojection_error": reprojection[valid],
-        }
+        products[pair_dir.name] = _pair_product(pair_dir.name, reference_path, current_path)
     return products
+
+
+def fuse_pin_multi_managed_pairs(config: str | Path | Mapping[str, Any], *,
+                                 ordered_pair_inputs: Sequence[PINMultiManagedPairInput | Mapping[str, Any]],
+                                 result_root: str | Path, visualization_root: str | Path) -> dict[str, Any]:
+    """Fuse explicit ordered managed reconstruction inputs without discovery.
+
+    All outputs are rooted below the supplied paths.  The function neither
+    scans ``result_root/pairs`` nor writes a case/legacy manifest.
+    """
+    from .config import load_config
+    values = load_config(config) if isinstance(config, (str, Path)) else config
+    options = _options_from_config(values)
+    products: dict[str, dict[str, Any]] = {}
+    for raw in ordered_pair_inputs:
+        item = raw if isinstance(raw, PINMultiManagedPairInput) else PINMultiManagedPairInput(
+            pair_id=str(raw["pair_id"]), reference_reconstruction=Path(raw["reference_reconstruction"]),
+            current_reconstruction=Path(raw["current_reconstruction"]))
+        if not item.pair_id or item.pair_id in products:
+            raise ValueError("managed fusion inputs require unique non-empty ordered pair IDs")
+        products[item.pair_id] = _pair_product(item.pair_id, Path(item.reference_reconstruction), Path(item.current_reconstruction))
+    if not products:
+        raise ValueError("managed fusion requires at least one explicit pair input")
+    summary = _fuse(products, Path(result_root) / "fused", options)
+    # Visualization stays best-effort and is deliberately outside scientific completion.
+    try:
+        from .visualization.pin_multi import visualize_fused
+        visualize_fused(Path(result_root) / "fused", Path(visualization_root) / "fused")
+    except Exception as exc:
+        summary["visualization_error"] = str(exc)
+    return summary
 
 
 def fuse_pin_multi_surfaces(config: str | Path | Mapping[str, Any],
@@ -94,7 +145,12 @@ def fuse_pin_multi_surfaces(config: str | Path | Mapping[str, Any],
     products = _load_pair_products(pairs_root, options.max_reprojection_error_px)
     if not products:
         raise ValueError("fusion found no valid pair products; check pair ROIs and solves")
-    summary = _fuse(products, fused_root, options)
+    # Legacy directory discovery remains compatible, but delegates numerical
+    # work to the same explicit-input entry point used by the control plane.
+    inputs = [PINMultiManagedPairInput(name, pairs_root / name / "reconstruct/reference.npz",
+                                       pairs_root / name / "reconstruct/current.npz") for name in products]
+    summary = fuse_pin_multi_managed_pairs(values, ordered_pair_inputs=inputs,
+                                            result_root=result_root, visualization_root=visualization_root)
     try:
         from .visualization.pin_multi import visualize_fused, visualize_fused_ground_truth_error
 

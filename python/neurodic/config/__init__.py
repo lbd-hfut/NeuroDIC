@@ -3,14 +3,22 @@
 from pathlib import Path
 from typing import Any
 import copy
+import json
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
     """Load one Traditional-DIC-compatible YAML mapping."""
     import yaml
 
-    with Path(path).open(encoding="utf-8") as stream:
-        data = yaml.safe_load(stream)
+    raw = Path(path).read_text(encoding="utf-8")
+    # JSON is a supported YAML subset, but PyYAML's YAML 1.1 scalar resolver
+    # reads a JSON exponent such as ``1e-06`` as a string.  Prefer the JSON
+    # grammar whenever the document is JSON so numeric JSON values remain
+    # numeric through configuration resolution and into native bindings.
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = yaml.safe_load(raw)
     if data is None:
         return {}
     if not isinstance(data, dict):

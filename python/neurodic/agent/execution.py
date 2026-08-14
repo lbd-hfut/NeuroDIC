@@ -19,7 +19,7 @@ import subprocess
 from typing import Any, Callable, Mapping, Sequence
 
 from .artifacts import content_identity, require_path_within
-from .config import effective_config_identity, stage_config_projection
+from .config import action_config_projection, effective_config_identity
 from .errors import ControlPlaneError, ErrorRecord
 from .inspect import resolve_config
 from .schemas import Envelope, canonical_json, utc_now
@@ -57,10 +57,24 @@ class ProducerSignature:
 class TrustedAction:
     """An allowlisted adapter with an explicit, stable producer identity."""
     action_id: str
-    run: Callable[[Mapping[str, Any], Path, Mapping[str, Any]], Sequence[str]]
+    run: Callable[[Mapping[str, Any], Path, Mapping[str, Any]], Sequence[str | "ProducedArtifact"]]
     implementation_identity: str
     output_contract: str = "neurodic.managed-artifact/v1"
     input_identities: Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]] | None = None
+    config_projection: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None
+    output_paths: Sequence[str] | None = None
+    # Some combined APIs emit conditional evaluation files and optional
+    # visualization products.  A resolver keeps safe-reuse exact while
+    # allowing the producer signature to determine the conditional set.
+    output_paths_resolver: Callable[[ProducerSignature], Sequence[str]] | None = None
+
+
+@dataclass(frozen=True)
+class ProducedArtifact:
+    """A validated adapter output with stable managed-artifact metadata."""
+    path: str
+    artifact_type: str
+    schema: str
 
 
 def _error(code: str, message: str, **details: Any) -> ControlPlaneError:
@@ -90,11 +104,27 @@ def _plan_request(plan: Mapping[str, Any]) -> tuple[Path, Path, str, str | None,
 def _revalidate(plan: Mapping[str, Any]) -> Mapping[str, Any]:
     if plan.get("schema_version") != "neurodic.trial_plan/v1":
         raise _error("SCHEMA.INVALID", "Unsupported trial plan schema")
+    intent = plan.get("planning_intent", {"restore_missing": False})
+    if not isinstance(intent, Mapping) or not isinstance(intent.get("restore_missing"), bool):
+        raise _error("SCHEMA.INVALID", "Plan has invalid planning_intent")
     config, paths, case_key, trial_id, override = _plan_request(plan)
+    revalidation_scope = dict(plan.get("scope", {}))
+    # NDeF stores a planner-owned snapshot of its managed scientific inputs in
+    # scope.  It is regenerated from the case and declared dependencies below;
+    # passing it as user scope would incorrectly reject every valid revalidation.
+    revalidation_scope.pop("ndef_surface_inputs", None)
+    revalidation_scope.pop("ndef_roi_inputs", None)
+    revalidation_scope.pop("ndef_precalculation_inputs", None)
+    revalidation_scope.pop("ndef_deformation_inputs", None)
+    if plan.get("solver") == "pin_multi" and revalidation_scope.get("selected_frame") == -1:
+        # Legacy pair-ROI plans inherited the config sentinel; C1 explicitly
+        # supplies a non-negative frame and therefore never takes this path.
+        revalidation_scope.pop("selected_frame")
     recomputed = plan_trial(config, case_key=case_key, case_paths=paths, override=override, trial_id=trial_id,
-                            scope=plan.get("scope", {})).to_dict()["data"]["trial_plan"]
+                            scope=revalidation_scope, restore_missing=intent["restore_missing"],
+                            upstream_dependencies=plan.get("upstream_dependencies", ())).to_dict()["data"]["trial_plan"]
     keys = ("plan_identity", "effective_config_identity", "baseline", "changes", "config_invalidated_stages",
-            "minimum_rerun_stages", "execution_actions", "policy_violations", "plan_status")
+            "minimum_rerun_stages", "execution_actions", "policy_violations", "plan_status", "planning_intent", "upstream_dependencies")
     if any(plan.get(key) != recomputed.get(key) for key in keys):
         raise _error("TRIAL.PLAN_STALE", "Plan does not match current baseline, policy, or derived planning state")
     if recomputed["plan_status"] != "ready":
@@ -114,20 +144,29 @@ def _implementation_identity() -> Mapping[str, Any]:
     return {"revision_policy": "neurodic.git-head-plus-dirty/v1", "git_revision": revision, "dirty": dirty}
 
 
-def _stage_signature(plan: Mapping[str, Any], effective: Mapping[str, Any], stage: str,
-                     action: TrustedAction) -> ProducerSignature:
-    projection = stage_config_projection(plan["solver"], stage, effective)
+def _stage_signature(plan: Mapping[str, Any], effective: Mapping[str, Any], action: TrustedAction,
+                     covered_stages: Sequence[str]) -> ProducerSignature:
+    projection = (action.config_projection(effective) if action.config_projection
+                  else action_config_projection(plan["solver"], covered_stages, effective))
     config_id = "sha256:" + hashlib.sha256(canonical_json(projection).encode()).hexdigest()
     inputs = action.input_identities(plan, effective) if action.input_identities else {
         "shared_inputs": plan["baseline"].get("shared_input_identities", {}),
         "baseline_config": plan["baseline"]["effective_config_identity"],
     }
-    return ProducerSignature(stage, {"adapter": action.implementation_identity,
+    dependencies = plan.get("upstream_dependencies", ())
+    if dependencies:
+        inputs = {**inputs, "upstream_dependencies": [{
+            "dependency_id": item.get("dependency_id"), "producer_action_id": item.get("producer_action_id"),
+            "producer_signature": item.get("producer_signature"), "scope": item.get("scope"),
+            "required_artifacts": [{"relative_path": artifact.get("relative_path"), "identity": artifact.get("identity")}
+                                   for artifact in item.get("required_artifacts", ())]
+        } for item in dependencies]}
+    return ProducerSignature(action.action_id, {"adapter": action.implementation_identity,
                                      "neurodic": _implementation_identity()}, config_id, inputs,
                              plan["scope"], action.output_contract)
 
 
-def _verified_reuse(managed_root: Path, signature: ProducerSignature) -> list[dict[str, Any]] | None:
+def _verified_reuse(managed_root: Path, signature: ProducerSignature, action: TrustedAction | None = None) -> list[dict[str, Any]] | None:
     """Return a prior managed attempt only if its full provenance and bytes verify."""
     trials = managed_root.resolve() / "trials"
     if not trials.is_dir(): return None
@@ -136,11 +175,46 @@ def _verified_reuse(managed_root: Path, signature: ProducerSignature) -> list[di
         manifest_path = candidate / "manifest.json"
         try: manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError): continue
-        artifacts = [item for item in manifest.get("produced_artifacts", [])
-                     if item.get("producer_signature") == expected]
-        if not artifacts: continue
-        attempt_ids = {item.get("stage_attempt_id") for item in artifacts}
-        if len(attempt_ids) != 1: continue
+        if not isinstance(manifest, Mapping) or manifest.get("trial_id") != candidate.name:
+            continue
+        attempts = manifest.get("stage_attempts", [])
+        published = manifest.get("produced_artifacts", [])
+        if not isinstance(attempts, Sequence) or not isinstance(published, Sequence):
+            continue
+        completed = [item for item in attempts if isinstance(item, Mapping)
+                     and item.get("status") == "completed"
+                     and item.get("action_id") == signature.stage_id
+                     and item.get("producer_signature") == expected]
+        if len(completed) != 1: continue
+        attempt_id = completed[0].get("stage_attempt_id")
+        artifacts = [item for item in published if isinstance(item, Mapping)
+                     and item.get("stage_attempt_id") == attempt_id]
+        # Never reuse a partially retagged attempt: every recorded output must
+        # retain the exact producer action and scientific signature.
+        if not artifacts or any(item.get("producer_action_id") != signature.stage_id
+                                or item.get("producer_signature") != expected for item in artifacts):
+            continue
+        expected_paths = None
+        if action is not None:
+            if action.output_paths_resolver is not None:
+                expected_paths = tuple(action.output_paths_resolver(signature))
+            elif action.output_paths is not None:
+                expected_paths = tuple(action.output_paths)
+        if expected_paths is not None:
+            prefix = f"artifacts/{signature.stage_id}/{attempt_id}/"
+            actual_paths = {str(item.get("location", ""))[len(prefix):]
+                            for item in artifacts if str(item.get("location", "")).startswith(prefix)}
+            published_root = candidate / "artifacts" / signature.stage_id / str(attempt_id)
+            filesystem_paths = {path.relative_to(published_root).as_posix() for path in published_root.rglob("*") if path.is_file()} if published_root.is_dir() else set()
+            wildcard_prefixes = tuple(item[:-3] for item in expected_paths if item.endswith("/**"))
+            exact_expected = {item for item in expected_paths if not item.endswith("/**")}
+            allowed_actual = {item for item in actual_paths if any(item.startswith(prefix) for prefix in wildcard_prefixes)}
+            allowed_filesystem = {item for item in filesystem_paths if any(item.startswith(prefix) for prefix in wildcard_prefixes)}
+            actual_exact = actual_paths - allowed_actual
+            filesystem_exact = filesystem_paths - allowed_filesystem
+            if (actual_exact != exact_expected or filesystem_exact != exact_expected
+                    or len(artifacts) != len(actual_paths)):
+                continue
         verified: list[dict[str, Any]] = []
         for artifact in artifacts:
             try:
@@ -162,20 +236,112 @@ def _workspace(managed_root: Path, trial_id: str) -> Path:
     return trial
 
 
-def _publish(staging: Path, trial: Path, stage: str, attempt_id: str, outputs: Sequence[str], signature: ProducerSignature) -> list[dict[str, Any]]:
+def _resolve_dependencies(plan: Mapping[str, Any], managed_root: Path) -> dict[str, dict[str, Any]]:
+    """Resolve only explicit, producer-signed managed artifacts from the plan."""
+    resolved: dict[str, dict[str, Any]] = {}
+    for dependency in plan.get("upstream_dependencies", ()):
+        try:
+            dependency_id = dependency["dependency_id"]; trial_id = dependency["source_trial_id"]
+            attempt_id = dependency["source_attempt_id"]; action_id = dependency["producer_action_id"]
+            signature = dependency["producer_signature"]; expected_scope = dependency["scope"]
+            required = dependency["required_artifacts"]
+        except (KeyError, TypeError) as error:
+            raise _error("DEPENDENCY.INVALID", "Managed dependency record is incomplete") from error
+        if (not isinstance(dependency_id, str) or not dependency_id or not isinstance(trial_id, str) or not _TRIAL_ID.fullmatch(trial_id)
+                or not isinstance(attempt_id, str) or not attempt_id or not isinstance(action_id, str) or not action_id
+                or not isinstance(signature, Mapping) or not isinstance(expected_scope, Mapping)
+                or not isinstance(required, Sequence) or isinstance(required, (str, bytes)) or dependency_id in resolved):
+            raise _error("DEPENDENCY.INVALID", "Managed dependency record has invalid types")
+        upstream_scope = signature.get("scope")
+        legacy_stage_alias = (action_id == "pin_multi.separate_pair_roi_call" and signature.get("stage_id") == "pin_multi.pair_roi")
+        # Historical managed NDeF surface producers may retain the public
+        # case.frame=-1 sentinel.  The deformation combined action resolves
+        # that frame to an explicit non-negative image index before signing;
+        # permit only this exact D→F compatibility while preserving every
+        # other dependency-scope equality check.
+        legacy_ndef_frame_alias = (action_id in {"ndef.combined_surface_call", "ndef.precalculation_call", "ndef.roi.generate_call"}
+                                   and plan.get("execution_actions", [{}])[0].get("action_id") == "ndef.deformation_combined_call"
+                                   and isinstance(upstream_scope, Mapping)
+                                   and upstream_scope.get("selected_frame") == -1
+                                   and plan.get("scope", {}).get("selected_frame") is not None
+                                   and plan.get("scope", {}).get("selected_frame") >= 0)
+        # A downstream dependency scope is the relevant projection of the
+        # complete, manifest-bound producer signature.  Historical pair-ROI
+        # signatures carry the legacy selected_frame=-1 sentinel, whereas C1
+        # binds its actual solve frame separately; requiring equality here
+        # would reject an otherwise exact, verified historical producer.
+        if ((signature.get("stage_id") != action_id and not legacy_stage_alias) or not isinstance(upstream_scope, Mapping)
+                or any(upstream_scope.get(key) != value for key, value in expected_scope.items()
+                       if not (legacy_ndef_frame_alias and key == "selected_frame"))):
+            raise _error("DEPENDENCY.PRODUCER_MISMATCH", "Dependency producer signature does not match its declared source")
+        for key, value in expected_scope.items():
+            if legacy_ndef_frame_alias and key == "selected_frame":
+                continue
+            if key in plan.get("scope", {}) and plan["scope"][key] != value:
+                raise _error("DEPENDENCY.SCOPE_MISMATCH", "Dependency scope conflicts with downstream scope", dependency_id=dependency_id, key=key)
+        source_trial = require_path_within(managed_root.resolve() / "trials" / trial_id, managed_root.resolve(), require_exists=True)
+        try: manifest = json.loads((source_trial / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error: raise _error("DEPENDENCY.INVALID", "Dependency source manifest is unreadable") from error
+        if not isinstance(manifest, Mapping) or manifest.get("trial_id") != trial_id:
+            raise _error("DEPENDENCY.PRODUCER_MISMATCH", "Dependency source manifest does not belong to the declared trial")
+        attempts = manifest.get("stage_attempts", [])
+        if not isinstance(attempts, Sequence) or not any(isinstance(item, Mapping)
+                                                          and item.get("stage_attempt_id") == attempt_id
+                                                          and item.get("status") == "completed"
+                                                          and item.get("action_id") == action_id
+                                                          and item.get("producer_signature") == signature
+                                                          for item in attempts):
+            raise _error("DEPENDENCY.PRODUCER_MISMATCH", "Dependency source attempt is not a completed declared producer attempt")
+        indexed = {item.get("location"): item for item in manifest.get("produced_artifacts", [])
+                   if isinstance(item, Mapping) and item.get("stage_attempt_id") == attempt_id
+                   and (item.get("producer_action_id", item.get("producer_signature", {}).get("stage_id")) == action_id
+                        or (legacy_stage_alias and item.get("producer_signature", {}).get("stage_id") == signature.get("stage_id")))
+                   and item.get("producer_signature") == signature}
+        files: dict[str, str] = {}
+        for artifact in required:
+            if not isinstance(artifact, Mapping): raise _error("DEPENDENCY.INVALID", "Dependency required artifact is invalid")
+            relative, identity = artifact.get("relative_path"), artifact.get("identity")
+            if not isinstance(relative, str) or not isinstance(identity, Mapping): raise _error("DEPENDENCY.INVALID", "Dependency artifact lacks path or identity")
+            # Producer declarations use their stable, staging-relative output
+            # paths (for example ``roi/per_camera/cam_0_mask.npy``), while
+            # publication places those files beneath the deterministic action
+            # and attempt namespace.  Resolve only those two exact spellings;
+            # this is deliberately not a search/fallback mechanism.
+            published_relative = f"artifacts/{action_id}/{attempt_id}/{relative}"
+            record = indexed.get(relative) or indexed.get(published_relative)
+            if record is None or record.get("identity") != identity:
+                raise _error("DEPENDENCY.PRODUCER_MISMATCH", "Dependency artifact is not published by the declared producer", dependency_id=dependency_id)
+            location = require_path_within(source_trial / (published_relative if record.get("location") == published_relative else relative),
+                                           source_trial, require_exists=True)
+            if not location.is_file() or _identity(location) != identity:
+                raise _error("DEPENDENCY.CONTENT_MISMATCH", "Dependency artifact content no longer matches the approved plan", dependency_id=dependency_id, path=relative)
+            files[Path(relative).name] = str(location)
+        resolved[dependency_id] = {"files": files, "producer_signature": signature, "scope": dict(expected_scope),
+                                   "source_trial_id": trial_id, "source_attempt_id": attempt_id}
+    return resolved
+
+
+def _normalized_outputs(outputs: Sequence[str | ProducedArtifact]) -> list[ProducedArtifact]:
+    return [item if isinstance(item, ProducedArtifact)
+            else ProducedArtifact(str(item), Path(str(item)).stem, "unknown/v1")
+            for item in outputs]
+
+
+def _publish(staging: Path, trial: Path, artifact_namespace: str, attempt_id: str, outputs: Sequence[str | ProducedArtifact], signature: ProducerSignature) -> list[dict[str, Any]]:
     published: list[dict[str, Any]] = []
-    destination = trial / "artifacts" / stage / attempt_id
+    destination = trial / "artifacts" / artifact_namespace / attempt_id
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists(): raise _error("EXECUTION.PUBLISH_FAILED", "Attempt output location already exists")
-    for item in outputs:
-        source = require_path_within(staging / item, staging, require_exists=True)
+    normalized = _normalized_outputs(outputs)
+    for item in normalized:
+        source = require_path_within(staging / item.path, staging, require_exists=True)
         if not source.is_file() or source.stat().st_size == 0: raise _error("EXECUTION.ARTIFACT_INVALID", "Output must be a non-empty regular file", path=str(source))
     os.replace(staging, destination)
-    for item in outputs:
-        artifact = destination / item
-        published.append({"artifact_type": Path(item).stem, "location": str(artifact.relative_to(trial)),
+    for item in normalized:
+        artifact = destination / item.path
+        published.append({"artifact_type": item.artifact_type, "location": str(artifact.relative_to(trial)), "producer_action_id": signature.stage_id,
                           "identity": _identity(artifact), "producer_signature": signature.to_dict(),
-                          "stage_attempt_id": attempt_id, "schema": "unknown/v1", "size_bytes": artifact.stat().st_size})
+                          "stage_attempt_id": attempt_id, "schema": item.schema, "size_bytes": artifact.stat().st_size})
     return published
 
 
@@ -195,9 +361,27 @@ def execute_trial(plan: Mapping[str, Any], *, managed_root: str | Path,
     if default_registry:
         # Lazy import preserves the native-free boundary for planning and only
         # exposes adapters whose output contract has been audited.
-        from .adapters.execution_pin_multi import guarded_pair_roi_action
+        from .adapters.execution_pin import guarded_pin_action
+        from .adapters.execution_stereo import guarded_stereo_action
+        from .adapters.execution_pin_multi import guarded_pair_roi_action, guarded_pair_solve_quality_action, guarded_fusion_postprocess_action
+        from .adapters.execution_ndef import guarded_ndef_surface_action
+        from .adapters.execution_ndef_roi import guarded_ndef_roi_action
+        from .adapters.execution_ndef_precalculation import guarded_ndef_precalculation_action
+        from .adapters.execution_ndef_deformation import guarded_ndef_deformation_action
+        pin = guarded_pin_action()
+        stereo = guarded_stereo_action()
         pair_roi = guarded_pair_roi_action()
-        allowed = {pair_roi.action_id: pair_roi}
+        pair_solve_quality = guarded_pair_solve_quality_action()
+        fusion_postprocess = guarded_fusion_postprocess_action()
+        ndef_surface = guarded_ndef_surface_action()
+        ndef_roi = guarded_ndef_roi_action()
+        ndef_precalculation = guarded_ndef_precalculation_action()
+        ndef_deformation = guarded_ndef_deformation_action()
+        allowed = {pin.action_id: pin, stereo.action_id: stereo, pair_roi.action_id: pair_roi,
+                   pair_solve_quality.action_id: pair_solve_quality, fusion_postprocess.action_id: fusion_postprocess,
+                   ndef_surface.action_id: ndef_surface, ndef_roi.action_id: ndef_roi}
+        allowed[ndef_precalculation.action_id] = ndef_precalculation
+        allowed[ndef_deformation.action_id] = ndef_deformation
     else:
         allowed = trusted_actions
     actions = approved["execution_actions"]
@@ -213,6 +397,18 @@ def execute_trial(plan: Mapping[str, Any], *, managed_root: str | Path,
     effective, _changes = merge_sparse_override(effective, approved["override"], solver=approved["solver"])
     if effective_config_identity(effective) != approved["effective_config_identity"]:
         raise _error("TRIAL.PLAN_STALE", "Effective configuration identity changed before execution")
+    if selected[0]["action_id"] == "pin_multi.fusion_postprocess_call":
+        # A serialized readiness string is not authority for a mutating C3
+        # action. Recompute the managed C2 report immediately before resolving
+        # dependencies, so changed/missing pair products fail closed.
+        from .pair_set_readiness import inspect_pin_multi_pair_set_readiness
+        readiness = inspect_pin_multi_pair_set_readiness(config_path, case_key=case_key, case_paths=paths_path,
+                                                          managed_root=managed_root, selected_frame=approved["scope"].get("selected_frame")).data
+        if (readiness.get("status") != "ready" or readiness.get("planned_pair_set_identity") != approved["scope"].get("planned_pair_set_identity")
+                or readiness.get("fusion_input_identity") != approved["scope"].get("fusion_input_identity")
+                or readiness.get("scope", {}).get("planned_pair_ids") != approved["scope"].get("planned_pair_ids")):
+            raise _error("DEPENDENCY.INVALID", "C3 pair-set readiness or fusion input identity is stale")
+    dependencies = _resolve_dependencies(approved, Path(managed_root))
     trial = _workspace(Path(managed_root), trial_id)
     manifest = {"schema_version": EXECUTION_SCHEMA_VERSION, "trial_id": trial_id, "plan_identity": approved["plan_identity"],
                 "execution_status": "prepared", "baseline": approved["baseline"], "override": approved["override"],
@@ -224,8 +420,8 @@ def execute_trial(plan: Mapping[str, Any], *, managed_root: str | Path,
     action = allowed[selected[0]["action_id"]]
     attempt_id = "attempt_" + hashlib.sha256((approved["plan_identity"] + utc_now()).encode()).hexdigest()[:16]
     stage = selected[0]["covers_stages"][-1]
-    signature = _stage_signature(approved, effective, stage, action)
-    reuse = _verified_reuse(Path(managed_root), signature)
+    signature = _stage_signature(approved, effective, action, selected[0]["covers_stages"])
+    reuse = _verified_reuse(Path(managed_root), signature, action)
     if reuse:
         attempt = {"stage_attempt_id": attempt_id, "action_id": action.action_id, "stage_id": stage, "status": "reused",
                    "started_at": utc_now(), "finished_at": utc_now(), "producer_signature": signature.to_dict(),
@@ -239,9 +435,14 @@ def execute_trial(plan: Mapping[str, Any], *, managed_root: str | Path,
                "started_at": utc_now(), "staging_root": str(staging.relative_to(trial)), "producer_signature": signature.to_dict()}
     manifest["execution_status"] = "running"; manifest["stage_attempts"].append(attempt); _atomic_json(trial / "manifest.json", manifest, trial)
     try:
-        outputs = list(action.run(effective, staging, approved["scope"]))
+        runtime_scope = {**approved["scope"], "_managed_dependencies": dependencies,
+                         "_planned_dependencies": approved.get("upstream_dependencies", ())}
+        # The sidecar records the exact signature that is about to publish;
+        # this is passed only through the adapter's private runtime scope.
+        runtime_scope["_producer_signature"] = signature.to_dict()
+        outputs = list(action.run(effective, staging, runtime_scope))
         if not outputs: raise _error("EXECUTION.ARTIFACT_INVALID", "Trusted action reported no outputs")
-        published = _publish(staging, trial, stage, attempt_id, outputs, signature)
+        published = _publish(staging, trial, action.action_id, attempt_id, outputs, signature)
     except KeyboardInterrupt:
         attempt.update({"status": "interrupted", "finished_at": utc_now()}); manifest["execution_status"] = "interrupted"
         _atomic_json(trial / "manifest.json", manifest, trial)

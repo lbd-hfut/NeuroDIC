@@ -9,9 +9,9 @@ def stages():
         ("pin_multi.inputs", [], ["images", "calibration"], [], "preparation"),
         ("pin_multi.pair_select", ["pin_multi.inputs"], [], ["pair_selection"], "separate_pair_roi_call"),
         ("pin_multi.pair_roi", ["pin_multi.pair_select"], [], ["pair_roi"], "separate_pair_roi_call"),
-        ("pin_multi.pair_solve", ["pin_multi.pair_roi"], [], ["pair_products"], "combined_solver_call"),
-        ("pin_multi.pair_quality", ["pin_multi.pair_solve"], [], ["pair_quality"], "combined_solver_call"),
-        ("pin_multi.fusion", ["pin_multi.pair_quality"], [], ["fused_surface"], "combined_solver_call"),
-        ("pin_multi.postprocess", ["pin_multi.fusion"], [], ["fused_surface"], "combined_solver_call"),
+        ("pin_multi.pair_solve", ["pin_multi.pair_roi"], [], ["pair_products"], "pair_solve_quality_call"),
+        ("pin_multi.pair_quality", ["pin_multi.pair_solve"], [], ["pair_quality"], "pair_solve_quality_call"),
+        ("pin_multi.fusion", ["pin_multi.pair_quality"], [], ["fused_surface"], "fusion_postprocess_call"),
+        ("pin_multi.postprocess", ["pin_multi.fusion"], [], ["fused_surface"], "fusion_postprocess_call"),
         ("pin_multi.evaluate", ["pin_multi.postprocess"], [], ["evaluation"], "combined_solver_call"),
     ]

@@ -33,6 +33,18 @@ multiview_calibration.hpp 多视角（传统）自标定：MultiviewCalibrationO
                        SparsePointDiagnostic / 棋盘格尺度选项与结果
 ```
 
+## Stereo logical camera roles
+
+For `case/Stereo/plate_center_load`, stereo role names are logical workflow
+roles, not assertions about the physical left/right position of the cameras:
+
+- `calibrate1` → calibration logical left → `cam1`
+- `calibrate2` → calibration logical right → `cam2`
+
+The compact solver-facing artifact is
+`result/calibration/camera_pair.json`.  Its path, content, camera order, world
+scale, and coordinate convention remain protected scientific identity.
+
 ## 传统多视角自标定（colmap_like）
 
 `src/calibration/traditional/multiview_calibration.cpp` 实现 COLMAP 风格增量

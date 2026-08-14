@@ -13,7 +13,7 @@ def plan(trial_id: str, solver="pin"):
     config = ROOT / ("config/pin_2d.yaml" if solver == "pin" else "config/pin_multi.yaml")
     key = "pin_2d" if solver == "pin" else "pin_multi"
     override = {"training":{"seed_iterations":4999}} if solver == "pin" else {"pair_roi":{"max_features":11999}}
-    scope = {} if solver == "pin" else {"pair_id":"cam_0__cam_1"}
+    scope = {"selected_frame": 0} if solver == "pin" else {"pair_id":"cam_0__cam_1"}
     return plan_trial(config, case_key=key, case_paths=ROOT/"config/case_paths.yaml", override=override, trial_id=trial_id, scope=scope).to_dict()["data"]["trial_plan"]
 
 def test_help_and_read_only_imports_are_native_free():
@@ -43,13 +43,15 @@ def test_json_stdout_exit_semantics_and_structured_errors(tmp_path: Path):
     payload=json.loads(bad.stdout); assert bad.returncode != 0 and payload["status"] == "error" and {"code","message"}.issubset(payload["errors"][0])
 
 def test_runtime_capabilities_unsupported_fail_closed_and_partial_reuse(tmp_path: Path):
-    multi=plan("compat_multi", "pin"); assert all(not x["execution_supported"] for x in multi["execution_actions"])
+    multi=plan("compat_multi", "pin"); pin_actions={x["action_id"]:x for x in multi["execution_actions"]}
+    assert pin_actions["pin.combined_solver_call"]["execution_supported"] is True
+    assert pin_actions["pin.combined_solver_call"]["completion_scope"] == "combined_action"
     pair=plan("compat_pair", "pin_multi"); actions={x["action_id"]:x for x in pair["execution_actions"]}
     assert actions["pin_multi.separate_pair_roi_call"]["execution_supported"] is True
     assert actions["pin_multi.separate_pair_roi_call"]["completion_scope"] == "requested_action_only"
     assert actions["pin_multi.combined_solver_call"]["execution_supported"] is False
     plan_path=tmp_path/"unsupported.json"; plan_path.write_text(json.dumps(multi),encoding="utf-8")
-    rejected=cli("trial","execute","--plan",str(plan_path),"--managed-root",str(tmp_path),"--action","pin.combined_solver_call","--format","json")
+    rejected=cli("trial","execute","--plan",str(plan_path),"--managed-root",str(tmp_path),"--action","pin.not_an_approved_action","--format","json")
     assert rejected.returncode != 0 and json.loads(rejected.stdout)["errors"][0]["code"] == "EXECUTION.UNSUPPORTED"
     calls=0
     def run(_values, staging, _scope):

@@ -16,6 +16,60 @@ def _mapping(config: str | Path | Mapping[str, Any]) -> Mapping[str, Any]:
     return load_config(config) if isinstance(config, (str, Path)) else config
 
 
+def ndef_reprojection_gate(config: str | Path | Mapping[str, Any]) -> dict[str, Any]:
+    """Compute the read-only production calibration reprojection gate.
+
+    This is the same camera/point/observation evidence consumed by the public
+    surface entry point.  It performs no calibration, optimization, or output
+    writes; callers receive the exact mean/median/p95 values and the configured
+    p95 threshold.
+    """
+    values = _mapping(config)
+    case = values.get("case", {})
+    root = Path(str(case.get("root", "."))).resolve()
+    calibration_value = Path(str(case.get("calibration", "result/calibration/calibration_result_scaled.json")))
+    calibration = calibration_value if calibration_value.is_absolute() else root / calibration_value
+    payload = json.loads(calibration.read_text(encoding="utf-8"))
+    cameras = payload.get("cameras") or payload.get("scaled_cameras")
+    points = payload.get("points3d") or payload.get("scaled_points3d")
+    observations_path = calibration.parent / "observations.npz"
+    if not isinstance(cameras, list) or not isinstance(points, list) or not observations_path.is_file():
+        return {"pass": False, "reason": "incomplete calibration package", "threshold_p95_px": float(values.get("surface", {}).get("max_reprojection_p95_px", 5.0))}
+    with np.load(observations_path, allow_pickle=False) as observed:
+        required = {"point_indices", "cam_indices", "uv"}
+        if required - set(observed.files):
+            return {"pass": False, "reason": "observations.npz lacks point_indices/cam_indices/uv",
+                    "threshold_p95_px": float(values.get("surface", {}).get("max_reprojection_p95_px", 5.0))}
+        point_indices = np.asarray(observed["point_indices"], dtype=np.int64)
+        camera_indices = np.asarray(observed["cam_indices"], dtype=np.int64)
+        uv = np.asarray(observed["uv"], dtype=np.float64)
+    xyz = np.asarray([point["xyz"] for point in points], dtype=np.float64)
+    if (point_indices.ndim != 1 or camera_indices.shape != point_indices.shape or uv.shape != (len(point_indices), 2)
+            or np.any(point_indices < 0) or np.any(point_indices >= len(xyz))
+            or np.any(camera_indices < 0) or np.any(camera_indices >= len(cameras))):
+        return {"pass": False, "reason": "observation arrays are incoherent",
+                "threshold_p95_px": float(values.get("surface", {}).get("max_reprojection_p95_px", 5.0))}
+    import cv2
+    errors: list[np.ndarray] = []
+    for camera_index, camera in enumerate(cameras):
+        selected = np.flatnonzero(camera_indices == camera_index)
+        if not len(selected):
+            continue
+        rotation = np.asarray(camera["R"], dtype=np.float64)
+        translation = np.asarray(camera["t"], dtype=np.float64).reshape(3, 1)
+        intrinsic = np.asarray(camera["K"], dtype=np.float64)
+        distortion = np.asarray(camera.get("distortion", []), dtype=np.float64)
+        projected, _ = cv2.projectPoints(xyz[point_indices[selected]].reshape(-1, 1, 3),
+                                         cv2.Rodrigues(rotation)[0], translation, intrinsic, distortion)
+        errors.append(np.linalg.norm(projected.reshape(-1, 2) - uv[selected], axis=1))
+    threshold = float(values.get("surface", {}).get("max_reprojection_p95_px", 5.0))
+    if not errors:
+        return {"pass": False, "reason": "no observations for any camera", "threshold_p95_px": threshold}
+    error = np.concatenate(errors)
+    metrics = {"mean": float(error.mean()), "median": float(np.median(error)), "p95": float(np.percentile(error, 95))}
+    return {**metrics, "threshold_p95_px": threshold, "pass": bool(np.isfinite(error).all() and metrics["p95"] <= threshold)}
+
+
 def inspect_ndef_preflight(config: str | Path | Mapping[str, Any]) -> dict[str, Any]:
     """Return a non-mutating readiness report before ROI or GPU work starts.
 

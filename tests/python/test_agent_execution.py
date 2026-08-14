@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _plan(trial_id: str) -> dict:
     return plan_trial(ROOT / "config/pin_2d.yaml", case_key="pin_2d", case_paths=ROOT / "config/case_paths.yaml",
-                      trial_id=trial_id, override={"training": {"seed_iterations": 4999}}).to_dict()["data"]["trial_plan"]
+                      trial_id=trial_id, scope={"selected_frame": 0}, override={"training": {"seed_iterations": 4999}}).to_dict()["data"]["trial_plan"]
 
 
 def _adapter(run) -> dict[str, TrustedAction]:
@@ -95,7 +95,7 @@ def test_tampered_plan_and_untrusted_actions_are_blocked(tmp_path: Path) -> None
         execute_trial(stale, managed_root=tmp_path, trusted_actions={})
     assert error.value.record.code == "TRIAL.PLAN_STALE"
     with pytest.raises(ControlPlaneError) as error:
-        execute_trial(_plan("fake_unsupported"), managed_root=tmp_path)
+        execute_trial(_plan("fake_unsupported"), managed_root=tmp_path, action_id="pin.not_an_approved_action")
     assert error.value.record.code == "EXECUTION.UNSUPPORTED"
     assert not (tmp_path / "trials/fake_unsupported").exists()
 
@@ -114,11 +114,11 @@ def test_output_escape_and_existing_trial_are_blocked(tmp_path: Path) -> None:
     assert error.value.record.code == "TRIAL.ROOT_EXISTS"
 
 
-def test_cli_execute_never_bypasses_plan_or_registers_real_adapter(tmp_path: Path) -> None:
+def test_cli_execute_rejects_an_action_outside_the_approved_plan(tmp_path: Path) -> None:
     import json, os, subprocess, sys
     plan_path = tmp_path / "plan.json"; plan_path.write_text(json.dumps(_plan("fake_cli")), encoding="utf-8")
     result = subprocess.run([sys.executable, "-m", "neurodic.cli", "trial", "execute", "--plan", str(plan_path),
-                             "--managed-root", str(tmp_path)], cwd=ROOT,
+                             "--managed-root", str(tmp_path), "--action", "pin.not_an_approved_action"], cwd=ROOT,
                             env={**os.environ, "PYTHONPATH": str(ROOT / "python")}, text=True, capture_output=True)
     assert result.returncode != 0
     assert json.loads(result.stdout)["errors"][0]["code"] == "EXECUTION.UNSUPPORTED"
@@ -132,7 +132,7 @@ def test_shared_input_content_change_makes_plan_stale(tmp_path: Path) -> None:
     paths = tmp_path / "paths.yaml"; paths.write_text(
         f"pin_2d:\n  case:\n    root: {case}\n    images_dir: .\n  output:\n    result: result/pin\n", encoding="utf-8")
     plan = plan_trial(config, case_key="pin_2d", case_paths=paths, trial_id="fake_input_stale",
-                      override={"training": {"seed_iterations": 4}}).to_dict()["data"]["trial_plan"]
+                      scope={"selected_frame": 0}, override={"training": {"seed_iterations": 4}}).to_dict()["data"]["trial_plan"]
     (case / "0.bmp").write_bytes(b"changed")
     with pytest.raises(ControlPlaneError) as error:
         execute_trial(plan, managed_root=tmp_path, trusted_actions=_adapter(lambda _config, _stage, _scope: []))

@@ -47,4 +47,7 @@ current APIs expose coarse combined calls and no guarded stage execution.
 A no-op override is always `no_effect` with an empty minimum rerun set. Missing
 artifact restoration is a separate explicit dry-run intent (`restore_missing` /
 `--restore-missing`), which may produce a plan with no config changes but a
-nonempty rerun closure.
+nonempty rerun closure. Every TrialPlan serializes this execution-relevant
+intent as `planning_intent: {"restore_missing": <bool>}` and includes it in
+its canonical plan identity. This lets the plan remain a self-contained,
+revalidatable approved contract rather than relying on CLI invocation history.

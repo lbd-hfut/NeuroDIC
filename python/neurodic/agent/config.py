@@ -200,3 +200,16 @@ def stage_config_projection(solver: str, stage: str, effective: Mapping[str, Any
         if owners and stage in owners:
             selected[path] = value
     return selected
+
+
+def action_config_projection(solver: str, stages: Sequence[str], effective: Mapping[str, Any]) -> dict[str, Any]:
+    """Scientific config leaves consumed by one coarse, trusted action.
+
+    A combined native call must bind every conceptual stage it actually
+    executes.  Output-routing and other protected non-scientific fields have
+    no ownership rule and are therefore deliberately excluded.
+    """
+    requested = set(stages)
+    leaves = flatten(effective)
+    return {path: value for path, value in leaves.items()
+            if (owners := owner_stages(solver, path)) and requested.intersection(owners)}

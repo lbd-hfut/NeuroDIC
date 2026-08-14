@@ -29,7 +29,7 @@ _LAZY_EXPORTS = {
     "run_stereo_case": (".api", "run_stereo_case"), "NDeFROIOptions": (".ndef_roi", "NDeFROIOptions"),
     "generate_ndef_roi": (".ndef_roi", "generate_ndef_roi"), "inspect_ndef_preflight": (".ndef_preflight", "inspect_ndef_preflight"),
     "make_ndef_run_mapping": (".ndef_paths", "make_ndef_run_mapping"), "PINMultiFusionOptions": (".pin_multi_fusion", "PINMultiFusionOptions"),
-    "fuse_pin_multi_surfaces": (".pin_multi_fusion", "fuse_pin_multi_surfaces"), "PINMultiPairROIOptions": (".pin_multi_roi", "PINMultiPairROIOptions"),
+    "fuse_pin_multi_surfaces": (".pin_multi_fusion", "fuse_pin_multi_surfaces"), "fuse_pin_multi_managed_pairs": (".pin_multi_fusion", "fuse_pin_multi_managed_pairs"), "PINMultiPairROIOptions": (".pin_multi_roi", "PINMultiPairROIOptions"),
     "pin_multi_pair_roi": (".pin_multi_roi", "pin_multi_pair_roi"), "configure_runtime": (".runtime", "configure_runtime"),
     "load_case_config": (".config", "load_case_config"),
 }
@@ -60,4 +60,4 @@ def __getattr__(name: str):
 __all__ = ["calibrate", "calibration", "models", "seeds", "ndef_dic", "ndef_sparse_precalculation", "pretrain_ndef_surface",
            "NDeFROIOptions", "generate_ndef_roi", "inspect_ndef_preflight", "make_ndef_run_mapping", "pin_dic", "run_planar_case", "pin_multi_slover_dic", "run_pin_multi_case", "run_stereo_case",
            "PINMultiPairROIOptions", "pin_multi_pair_roi", "PINMultiFusionOptions",
-           "fuse_pin_multi_surfaces", "pin_stereo_dic", "configure_runtime", "load_case_config", "native_available"]
+           "fuse_pin_multi_surfaces", "fuse_pin_multi_managed_pairs", "pin_stereo_dic", "configure_runtime", "load_case_config", "native_available"]

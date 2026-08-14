@@ -19,7 +19,7 @@ pin_stereo:
     left_images: cam1
     right_images: cam2
     roi: ROI.bmp
-    camera_pair: result/calibration_stereo/camera_pair.json
+    camera_pair: result/calibration/camera_pair.json
     # Sorted left/right images are paired by index; index 0 is the reference.
     # -1 selects the last matching deformed pair.
     frame: -1

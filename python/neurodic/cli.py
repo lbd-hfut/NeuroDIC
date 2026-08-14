@@ -9,7 +9,8 @@ from typing import Callable
 
 from .agent.errors import ControlPlaneError, ErrorRecord, error_envelope
 from .agent.inspect import inspect_artifact, inspect_case, inspect_config, inspect_pipeline, inspect_result
-from .agent.evaluate import evaluate_result
+from .agent.pair_set_readiness import inspect_pin_multi_pair_set_readiness
+from .agent.evaluate import evaluate_pin_multi_managed_result, evaluate_result
 from .agent.diagnose import diagnose_result, diagnose_quality_report, load_quality_report
 from .agent.trials import plan_trial
 from .agent.execution import execute_trial
@@ -36,10 +37,16 @@ def _parser() -> argparse.ArgumentParser:
     artifact.add_argument("--path", required=True); artifact.add_argument("--case-root", required=True)
     artifact.add_argument("--artifact-type", default="unknown"); artifact.add_argument("--artifact-schema", default="unknown/v1")
     artifact.add_argument("--producer-stage", default="unknown"); artifact.add_argument("--format", choices=("json", "text"), default="json")
+    pair_readiness = inspect_sub.add_parser("pin-multi-pair-set-readiness", help="Read-only managed PIN Multi pair-set readiness")
+    pair_readiness.add_argument("--config", required=True); pair_readiness.add_argument("--case-key")
+    pair_readiness.add_argument("--case-paths", default="config/case_paths.yaml"); pair_readiness.add_argument("--managed-root", required=True)
+    pair_readiness.add_argument("--selected-frame", required=True, type=int); pair_readiness.add_argument("--format", choices=("json", "text"), default="json")
     evaluate = sub.add_parser("evaluate", help="Read-only evidence and quality evaluation")
     evaluate.add_argument("--config", required=True); evaluate.add_argument("--case-key")
     evaluate.add_argument("--case-paths", default="config/case_paths.yaml"); evaluate.add_argument("--case-root")
     evaluate.add_argument("--solver"); evaluate.add_argument("--profile", default="config/quality_profiles/default.yaml")
+    evaluate.add_argument("--managed-root", help="Trusted managed root for explicit PIN Multi managed-only evaluation")
+    evaluate.add_argument("--managed-evidence", help="JSON object containing explicit ordered C1 and C3 managed evidence bindings")
     evaluate.add_argument("--format", choices=("json", "text"), default="json")
     diagnose = sub.add_parser("diagnose", help="Read-only deterministic failure-family diagnosis")
     source = diagnose.add_mutually_exclusive_group(required=True)
@@ -60,6 +67,8 @@ def _parser() -> argparse.ArgumentParser:
     plan.add_argument("--override", help="Sparse YAML mapping containing only changed fields")
     plan.add_argument("--case-key"); plan.add_argument("--case-paths", default="config/case_paths.yaml")
     plan.add_argument("--case-root"); plan.add_argument("--solver"); plan.add_argument("--trial-id")
+    plan.add_argument("--scope-json", help="Structured JSON mapping frozen into the TrialPlan scope")
+    plan.add_argument("--dependency-json", help="Structured JSON list of explicitly selected managed upstream dependencies")
     plan.add_argument("--restore-missing", action="store_true", help="Also plan restoration of missing/unverified producer outputs")
     plan.add_argument("--format", choices=("json", "text"), default="json")
     execute = trial_sub.add_parser("execute", help="Execute one previously approved TrialPlan")
@@ -112,7 +121,19 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as error:
         return int(error.code)
     try:
-        if args.command == "evaluate": report = evaluate_result(args.config, case_key=args.case_key, case_paths=args.case_paths, case_root=args.case_root, solver=args.solver, profile=args.profile)
+        if args.command == "evaluate":
+            if args.managed_root or args.managed_evidence:
+                if not args.managed_root or not args.managed_evidence:
+                    raise ValueError("Managed evaluation requires both --managed-root and --managed-evidence")
+                evidence=json.loads(open(args.managed_evidence, encoding="utf-8").read())
+                report=evaluate_pin_multi_managed_result(args.config, managed_root=args.managed_root,
+                    ordered_pair_results=evidence["ordered_pair_results"], fusion_result=evidence["fusion_result"],
+                    selected_frame=evidence["selected_frame"], expected_pair_ids=evidence["expected_pair_ids"],
+                    expected_planned_pair_set_identity=evidence["planned_pair_set_identity"],
+                    expected_fusion_input_identity=evidence["fusion_input_identity"],
+                    expected_fusion_producer_signature=evidence["fusion_producer_signature"],
+                    case_key=args.case_key, case_paths=args.case_paths, profile=args.profile)
+            else: report = evaluate_result(args.config, case_key=args.case_key, case_paths=args.case_paths, case_root=args.case_root, solver=args.solver, profile=args.profile)
         elif args.command == "recommend": report = recommend_from_diagnosis(json.loads(open(args.diagnosis, encoding="utf-8").read()), args.config, case_key=args.case_key, case_paths=args.case_paths, trial_id=args.trial_id, parameter_registry=args.parameter_registry, intervention_rules=args.intervention_rules)
         elif args.command == "compare": report = compare_quality_reports(_report_payload(args.baseline), _report_payload(args.candidate), profile=args.profile)
         elif args.command == "best":
@@ -128,15 +149,18 @@ def main(argv: list[str] | None = None) -> int:
                 report = execute_trial(plan, managed_root=args.managed_root, action_id=args.action)
             else:
                 override = load_config(args.override) if args.override else {}
+                scope = json.loads(args.scope_json) if args.scope_json else None
+                dependencies = json.loads(args.dependency_json) if args.dependency_json else None
                 report = plan_trial(args.config, override=override, case_key=args.case_key, case_paths=args.case_paths,
                                     case_root=args.case_root, solver=args.solver, trial_id=args.trial_id,
-                                    restore_missing=args.restore_missing)
+                                    restore_missing=args.restore_missing, scope=scope, upstream_dependencies=dependencies)
         elif args.command == "diagnose":
             if args.quality:
                 from .agent.schemas import Envelope
                 report = Envelope(status="ok", operation="diagnose.quality", data={"diagnosis": diagnose_quality_report(load_quality_report(args.quality)).to_dict()})
             else: report = diagnose_result(args.config, case_key=args.case_key, case_paths=args.case_paths, case_root=args.case_root, solver=args.solver, profile=args.profile)
         elif args.target == "artifact": report = inspect_artifact(args.path, case_root=args.case_root, artifact_type=args.artifact_type, artifact_schema=args.artifact_schema, producer_stage=args.producer_stage)
+        elif args.target == "pin-multi-pair-set-readiness": report = inspect_pin_multi_pair_set_readiness(args.config, case_key=args.case_key, case_paths=args.case_paths, managed_root=args.managed_root, selected_frame=args.selected_frame)
         else:
             func: Callable = {"case": inspect_case, "config": inspect_config, "pipeline": inspect_pipeline, "result": inspect_result}[args.target]
             report = func(args.config, case_key=args.case_key, case_paths=args.case_paths, case_root=args.case_root, solver=args.solver)

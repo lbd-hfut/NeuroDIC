@@ -163,6 +163,15 @@ export PYTHONPATH=$PWD/python:$PWD/build/python
 $ND_ENV/bin/python -c "import neurodic; import neurodic._neurodic"
 ```
 
+Native-capable control-plane actions must retain that exact source-before-build
+ordering. `PYTHONPATH=$PWD/python` is suitable only for native-free planning and
+tests; it cannot resolve the build-tree extension. Before an NDeF deformation
+execution, the control plane additionally requires these extension attributes:
+`CameraModel`, `NDeFProblem`, `NDeFModelOptions`,
+`estimate_ndef_displacement_scale`, `PhotometricLossType`, and `NDeFSolver`.
+The import path and runtime capability report are environment evidence, not
+scientific producer-signature determinants.
+
 ## 4. Where Development Happens
 
 | Task | Environment | Command |
